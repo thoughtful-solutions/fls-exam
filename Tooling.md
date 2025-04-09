@@ -1,7 +1,7 @@
 # Tools
 
 ```
-https://github.com/360trev/ME7RomTool_Ferrari
+https://github.com/360trev/ME7RomTool_Ferrari  [Has needle tooling]
 fork https://github.com/nyetwurk/ME7Sum/
 https://github.com/chaoschris/ME7Sum
 ```
