@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+venv/
+*.fls
+*.hex
+ecu*.txt
+
 # C extensions
 *.so
 
