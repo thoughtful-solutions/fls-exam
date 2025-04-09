@@ -69,6 +69,13 @@ The first script performs n-gram analysis directly on binary files rather than t
 python binary_ngram.py -n 8 -t 20 your_file1.fls your_file2.fls your_file3.fls
 ```
 
+```
+    -n, --ngram-size: Size of n-grams to analyze (default: 8)
+    -t, --top: Number of top patterns to display (default: 20)
+    -m, --min-files: Minimum number of files a pattern must appear in (default: 2)
+    -o, --output: Output results to file (default: screen only)
+```
+
 Key features:
 
 * Works directly with binary FLS files (no need for text dumps)
