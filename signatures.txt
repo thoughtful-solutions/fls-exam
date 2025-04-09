@@ -1,0 +1,105 @@
+# Manufacturer identifiers
+424F534348                # "BOSCH"
+464552524152              # "FERRAR"
+4645525241524920          # "FERRARI "
+4D4153455241544920        # "MASERATI "
+4C414D424F524748494E49    # "LAMBORGHINI"
+504F5253434845            # "PORSCHE"
+41554449                  # "AUDI"
+424D57                    # "BMW"
+4D45524345444553          # "MERCEDES"
+564F4C4B53574147454E      # "VOLKSWAGEN"
+464941542020              # "FIAT  "
+414C464120524F4D454F      # "ALFA ROMEO"
+4D434C4152454E            # "MCLAREN"
+
+# ECU model identifiers
+4D4544                    # "MED" (Motronic Engine)
+4D45375F                  # "ME7_" (Motronic Engine 7)
+45445335                  # "EDS5" (Electronic Diesel System)
+4D4F54524F4E4943          # "MOTRONIC"
+4A45545452                # "JETTR" (Jetronic)
+4544432031362E37          # "EDC 16.7"
+4D56422037                # "MVB 7" (Micro Variable Block)
+454354                    # "ECT" (Engine Control Type)
+
+# Component identifiers
+454E47494E45              # "ENGINE"
+4742                      # "GB" (Gearbox)
+5452414E534D495353494F4E  # "TRANSMISSION"
+41425320                  # "ABS "
+455350                    # "ESP"
+41495242414720            # "AIRBAG "
+434C494D415445            # "CLIMATE"
+41432020                  # "AC  "
+45504153                  # "EPAS" (Electric Power Assisted Steering)
+455053                    # "EPS" (Electric Power Steering)
+
+# Engine parameters
+5450532020                # "TPS  " (Throttle Position Sensor)
+4D4146                    # "MAF" (Mass Air Flow)
+49415420                  # "IAT " (Intake Air Temperature)
+43544F5320                # "CTOS " (Coolant Temperature)
+454E47495445              # "ENGITE" (Engine Temp)
+4F325320                  # "O2S " (Oxygen Sensor)
+43414D                    # "CAM" (Camshaft)
+43527020                  # "CRp " (Crankshaft Position)
+56444320                  # "VDC " (Vehicle Dynamics Control)
+494E4A                    # "INJ" (Injector)
+46554C55                  # "FULU" (Fuel)
+494750                    # "IGP" (Ignition Pulse)
+54494D494E4720            # "TIMING "
+4B4E4F434B                # "KNOCK"
+564343                    # "VCC" (Voltage Control)
+5645                      # "VE" (Volumetric Efficiency)
+544F52515545              # "TORQUE"
+51554F4952                # "QUOIR" (Torque Request)
+
+# Configuration areas
+434F4E464947              # "CONFIG"
+43414C4942                # "CALIB"
+504152414D                # "PARAM"
+424C4F434B                # "BLOCK"
+4D415053                  # "MAPS"
+5441424C45                # "TABLE"
+4D454D4F5259              # "MEMORY"
+4556454E5453              # "EVENTS"
+4445465F                  # "DEF_"
+534554                    # "SET"
+4C5554                    # "LUT" (Lookup Table)
+4D4F4445                  # "MODE"
+4C494D4954                # "LIMIT"
+52504D                    # "RPM"
+56414C5645                # "VALVE"
+54554E45                  # "TUNE"
+4F4646534554              # "OFFSET"
+52415445                  # "RATE"
+424F4F5354                # "BOOST"
+
+# Units and measures
+4252414B45                # "BRAKE"
+4D50482020                # "MPH  "
+4B502F48                  # "KP/H"
+5330                      # "S0" (Speedometer)
+5452494D                  # "TRIM"
+465545                    # "FUE" (Fuel)
+454D495353                # "EMISS"
+4C414D424441              # "LAMBDA"
+54454D50                  # "TEMP"
+
+# Ferrari-specific parameters
+455858585F56              # "EXXX_V" (Engine XX Version)
+505830                    # "PX0" (Program executable)
+46435F56                  # "FC_V" (Ferrari Control Version)
+4645524D                  # "FERM" (Ferrari Engine Management)
+46423930                  # "FB90" (Ferrari Bosch 9.0)
+544D5030                  # "TMP0" (Temperature 0)
+46524D573                  # "FRMW" (Firmware)
+505744                    # "PWD" (Password)
+46425243                  # "FBRC" (Ferrari BRRC)
+4644494147                # "FDIAG" (Ferrari Diagnostic)
+4643414C                  # "FCAL" (Ferrari Calibration)
+504152545F4E4F            # "PART_NO" (Part Number)
+53455249414C5F4E4F        # "SERIAL_NO" (Serial Number)
+4643535F5630              # "FCS_V0" (Ferrari Control System Version 0)
+56494E5F                  # "VIN_" (Vehicle Identification Number)
