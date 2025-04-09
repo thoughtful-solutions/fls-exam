@@ -78,10 +78,15 @@ Key features:
 * Displays both hex and ASCII representations
 
 
-## Pattern Finder
+## Signature Finder Tool
+
+
+This script reads signatures from a 'signatures.lst' file in the current directory
+and searches for these signatures in FLS files specified as command-line arguments.
+It reports which signatures were found and their positions within each file.
 
 ```
-python pattern_finder.py your_file1.fls your_file2.fls your_file3.fls
+python signature_finder.py stock.fls updated.fls stock02.fls updated02.fls
 ```
 
 
