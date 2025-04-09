@@ -89,5 +89,35 @@ It reports which signatures were found and their positions within each file.
 python signature_finder.py stock.fls updated.fls stock02.fls updated02.fls
 ```
 
+## FLS File Comparison Tool
+
+This script compares two FLS files and reports:
+1. Differences in positions of signatures from signatures.lst
+2. Byte sequence differences between the files, showing start positions and lengths
+
+```
+python fls_compare.py <file1.fls> <file2.fls> [min_match_length]
+```
+
+When comparing files, the tool will:
+
+ * Consider matching regions shorter than the minimum match length
+    to be part of a single difference
+ * Only split differences when it finds a matching 
+    region of at least the specified length
+ * This results in fewer, larger difference regions instead of 
+   many small fragmented differences
 
 
+The improved algorithm:
+
+* Tracks both difference regions and matching regions
+* Only ends a difference when it finds a matching sequence of sufficient length
+* Properly handles edge cases at file boundaries
+
+
+
+This approach is particularly useful for firmware files where small matching sequences between modified regions don't represent meaningful separations. The default value of 16 bytes is a reasonable starting point, but you can adjust it based on your specific files:
+
+Lower values (like 4 or 8) will result in more granular differences
+Higher values (like 32 or 64) will group more differences together into larger chunks

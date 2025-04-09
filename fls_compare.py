@@ -148,13 +148,15 @@ def compare_signatures(file1_results: Dict[str, List[Tuple[int, str]]],
     return comparison
 
 
-def find_byte_differences(file1_path: str, file2_path: str) -> List[Tuple[int, int]]:
+def find_byte_differences(file1_path: str, file2_path: str, min_match_length: int = 16) -> List[Tuple[int, int]]:
     """
     Find byte sequence differences between two files.
+    Considers small matching regions (less than min_match_length) as part of a single difference.
     
     Args:
         file1_path: Path to the first file
         file2_path: Path to the second file
+        min_match_length: Minimum number of matching bytes to consider as a separate sequence
         
     Returns:
         List of tuples (start_position, length) for each different segment
@@ -171,23 +173,52 @@ def find_byte_differences(file1_path: str, file2_path: str) -> List[Tuple[int, i
         
         # Track the current difference region
         diff_start = None
+        match_start = None
         
         # Compare byte by byte
-        for i in range(min_length):
+        i = 0
+        while i < min_length:
             if content1[i] != content2[i]:
-                # Start of a new difference region
+                # Start of a new difference region or continue current one
                 if diff_start is None:
                     diff_start = i
-            elif diff_start is not None:
-                # End of a difference region
-                diff_length = i - diff_start
-                differences.append((diff_start, diff_length))
-                diff_start = None
+                    match_start = None
+                elif match_start is not None:
+                    # We were in a matching region, but it's too short
+                    if i - match_start < min_match_length:
+                        # Discard this short match and continue the difference region
+                        match_start = None
+            else:
+                # Matching byte
+                if diff_start is not None and match_start is None:
+                    # First matching byte after a difference
+                    match_start = i
+                elif diff_start is not None and match_start is not None:
+                    # Already in a matching region
+                    if i - match_start >= min_match_length - 1:
+                        # We've reached the minimum match length, end the difference
+                        diff_length = match_start - diff_start
+                        differences.append((diff_start, diff_length))
+                        diff_start = None
+                        match_start = None
+            i += 1
         
-        # Handle any difference at the end of the file
+        # Handle any ongoing difference at the end of the file
         if diff_start is not None:
-            diff_length = min_length - diff_start
-            differences.append((diff_start, diff_length))
+            if match_start is not None:
+                # We were in a matching region at the end
+                if min_length - match_start >= min_match_length:
+                    # The match is long enough to split
+                    diff_length = match_start - diff_start
+                    differences.append((diff_start, diff_length))
+                else:
+                    # Match is too short, include it in the difference
+                    diff_length = min_length - diff_start
+                    differences.append((diff_start, diff_length))
+            else:
+                # No match at the end
+                diff_length = min_length - diff_start
+                differences.append((diff_start, diff_length))
         
         # Add remaining bytes if files have different lengths
         if len(content1) > len(content2):
@@ -203,12 +234,23 @@ def find_byte_differences(file1_path: str, file2_path: str) -> List[Tuple[int, i
 
 def main():
     """Main function to process command line arguments and run the comparison."""
-    if len(sys.argv) != 3:
-        print("Usage: python fls_compare.py <file1.fls> <file2.fls>")
+    if len(sys.argv) < 3 or len(sys.argv) > 4:
+        print("Usage: python fls_compare.py <file1.fls> <file2.fls> [min_match_length]")
         sys.exit(1)
         
     file1_path = sys.argv[1]
     file2_path = sys.argv[2]
+    
+    # Default minimum match length is 16 bytes, but user can specify a different value
+    min_match_length = 16
+    if len(sys.argv) == 4:
+        try:
+            min_match_length = int(sys.argv[3])
+            if min_match_length < 1:
+                print("Warning: min_match_length must be at least 1. Using default value of 16.")
+                min_match_length = 16
+        except ValueError:
+            print("Warning: min_match_length must be an integer. Using default value of 16.")
     
     for filepath in [file1_path, file2_path]:
         if not os.path.exists(filepath):
@@ -216,6 +258,7 @@ def main():
             sys.exit(1)
     
     print(f"Comparing '{file1_path}' with '{file2_path}'")
+    print(f"Using minimum match length of {min_match_length} bytes")
     
     # Read signatures from signatures.lst
     signatures = read_signatures()
@@ -283,7 +326,7 @@ def main():
     
     # Find and report byte differences
     print("\n=== BYTE SEQUENCE DIFFERENCES ===")
-    byte_differences = find_byte_differences(file1_path, file2_path)
+    byte_differences = find_byte_differences(file1_path, file2_path, min_match_length)
     
     if not byte_differences:
         print("No byte differences found. Files are identical.")
