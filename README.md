@@ -107,33 +107,71 @@ python signature_finder.py stock.fls updated.fls stock02.fls updated02.fls
 
 ## FLS File Comparison Tool
 
-This script compares two FLS files and reports:
-1. Differences in positions of signatures from signatures.lst
-2. Byte sequence differences between the files, showing start positions and lengths
+Below is an explanation of what the updated `fls_compare.py` script does, formatted as content suitable for a `README.md` file. This description is concise, user-friendly, and includes usage instructions, making it appropriate for someone encountering the tool for the first time.
 
-```
+---
+
+# FLS File Comparison Tool
+
+`fls_compare.py` is a Python script designed to compare two `.FLS` files (binary firmware files commonly used for Engine Control Units, or ECUs). It provides detailed insights into differences between the files in two key areas:
+
+1. **Signature Comparison**: Identifies and compares the positions of predefined strings (signatures) listed in a `signatures.lst` file.
+2. **Byte Sequence Differences**: Detects regions where the byte sequences differ, including a hex preview and any ASCII/UTF-8 strings immediately preceding each difference.
+
+This tool is useful for engineers, developers, or hobbyists analyzing firmware updates, debugging ECU configurations, or reverse-engineering binary files.
+
+### Features
+
+- **Signature Search**:
+  - Reads signatures from `signatures.lst` (one per line).
+  - Searches for each signature in both files as ASCII and UTF-8 encoded strings.
+  - Reports:
+    - Signatures unique to each file.
+    - Signatures present in both files but at different positions.
+    - Signatures at identical positions.
+
+- **Byte Sequence Comparison**:
+  - Identifies all regions where the files differ in their byte sequences.
+  - Groups small differences into larger segments based on a configurable `min_match_length` (default: 16 bytes).
+  - For each difference:
+    - Shows the starting position and length.
+    - Provides a hex preview of the first 16 bytes.
+    - Searches backwards (up to 50 bytes) for a preceding ASCII or UTF-8 string (minimum 4 characters) in both files.
+
+- **Output**:
+  - Structured console output with summaries and detailed sections.
+  - Includes total differing bytes and percentage difference relative to file size.
+
+
+```bash
 python fls_compare.py <file1.fls> <file2.fls> [min_match_length]
 ```
 
-When comparing files, the tool will:
+- `<file1.fls>`: Path to the first `.FLS` file.
+- `<file2.fls>`: Path to the second `.FLS` file.
+- `[min_match_length]`: Optional integer specifying the minimum number of matching bytes to split differences (default: 16).
 
- * Consider matching regions shorter than the minimum match length
-    to be part of a single difference
- * Only split differences when it finds a matching 
-    region of at least the specified length
- * This results in fewer, larger difference regions instead of 
-   many small fragmented differences
+### How It Works
 
+1. **Signature Comparison**:
+   - Loads signatures from `signatures.lst`.
+   - Searches both files for each signature and compares their positions.
+   - Categorizes results into unique, differing, or matching signatures.
 
-The improved algorithm:
+2. **Byte Difference Analysis**:
+   - Compares files byte-by-byte, grouping differences based on `min_match_length`.
+   - For each difference:
+     - Searches backwards (up to 50 bytes) for a printable string in both files.
+     - Displays the string (if found) with its offset, followed by a hex dump of the differing bytes.
 
-* Tracks both difference regions and matching regions
-* Only ends a difference when it finds a matching sequence of sufficient length
-* Properly handles edge cases at file boundaries
+### Customization
 
+- **Signature File**: Edit `signatures.lst` to include strings relevant to your `.FLS` files.
+- **Search Parameters**: Modify `max_search` (default 50) or `min_length` (default 4) in `extract_string_before()` to adjust string detection.
+- **Output Limits**: Change the script to show more/fewer differences or hex bytes (currently capped at 20 differences, 16 bytes each).
 
+### Limitations
 
-This approach is particularly useful for firmware files where small matching sequences between modified regions don't represent meaningful separations. The default value of 16 bytes is a reasonable starting point, but you can adjust it based on your specific files:
-
-Lower values (like 4 or 8) will result in more granular differences
-Higher values (like 32 or 64) will group more differences together into larger chunks
+- Requires a `signatures.lst` file to exist.
+- String search is limited to ASCII and UTF-8 encodings, with a 50-byte backward search range.
+- Does not validate `.FLS` file format—assumes they are binary.

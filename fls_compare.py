@@ -4,9 +4,9 @@ FLS File Comparison Tool
 
 This script compares two FLS files and reports:
 1. Differences in positions of signatures from signatures.lst
-2. Byte sequence differences between the files, showing start positions and lengths
+2. Byte sequence differences between the files, showing start positions, lengths, and preceding strings
 
-Usage: python fls_compare.py <file1.fls> <file2.fls>
+Usage: python fls_compare.py <file1.fls> <file2.fls> [min_match_length]
 """
 
 import sys
@@ -55,9 +55,7 @@ def search_signatures(filepath: str, signatures: List[str]) -> Dict[str, List[Tu
         with open(filepath, 'rb') as f:
             content = f.read()
             
-        # Search for each signature in both ASCII and UTF-8 forms
         for sig in signatures:
-            # Search as ASCII bytes
             ascii_sig = sig.encode('ascii', errors='ignore')
             pos = 0
             while True:
@@ -67,7 +65,6 @@ def search_signatures(filepath: str, signatures: List[str]) -> Dict[str, List[Tu
                 results[sig].append((pos, 'ASCII'))
                 pos += 1
                 
-            # Search as UTF-8 bytes if different from ASCII
             utf8_sig = sig.encode('utf-8')
             if utf8_sig != ascii_sig:
                 pos = 0
@@ -75,14 +72,12 @@ def search_signatures(filepath: str, signatures: List[str]) -> Dict[str, List[Tu
                     pos = content.find(utf8_sig, pos)
                     if pos == -1:
                         break
-                    # Check if this position was already found as ASCII
                     if not any(existing_pos == pos for existing_pos, _ in results[sig]):
                         results[sig].append((pos, 'UTF-8'))
                     pos += 1
                     
-        # Sort positions for each signature
         for sig in results:
-            results[sig].sort(key=lambda x: x[0])  # Sort by position
+            results[sig].sort(key=lambda x: x[0])
             
     except Exception as e:
         print(f"Error processing file '{filepath}': {e}")
@@ -91,7 +86,7 @@ def search_signatures(filepath: str, signatures: List[str]) -> Dict[str, List[Tu
 
 
 def compare_signatures(file1_results: Dict[str, List[Tuple[int, str]]], 
-                     file2_results: Dict[str, List[Tuple[int, str]]]) -> Dict[str, Dict[str, List]]:
+                      file2_results: Dict[str, List[Tuple[int, str]]]) -> Dict[str, Dict[str, List]]:
     """
     Compare signature positions between two files.
     
@@ -100,11 +95,7 @@ def compare_signatures(file1_results: Dict[str, List[Tuple[int, str]]],
         file2_results: Results from the second file
         
     Returns:
-        Dictionary containing:
-        - only_in_file1: Signatures only in file1
-        - only_in_file2: Signatures only in file2
-        - position_differences: Signatures in both but at different positions
-        - same: Signatures at identical positions in both files
+        Dictionary containing signature comparison results
     """
     comparison = {
         'only_in_file1': {},
@@ -113,7 +104,6 @@ def compare_signatures(file1_results: Dict[str, List[Tuple[int, str]]],
         'same': {}
     }
     
-    # Find all signatures that were found in at least one file
     all_signatures = set(sig for sig in file1_results if file1_results[sig]) | \
                      set(sig for sig in file2_results if file2_results[sig])
     
@@ -121,25 +111,20 @@ def compare_signatures(file1_results: Dict[str, List[Tuple[int, str]]],
         file1_positions = file1_results.get(sig, [])
         file2_positions = file2_results.get(sig, [])
         
-        # Skip if not found in either file (shouldn't happen with our filtering)
         if not file1_positions and not file2_positions:
             continue
             
-        # Only in file 1
         if file1_positions and not file2_positions:
             comparison['only_in_file1'][sig] = file1_positions
             continue
             
-        # Only in file 2
         if not file1_positions and file2_positions:
             comparison['only_in_file2'][sig] = file2_positions
             continue
             
-        # In both files - check if positions are the same
         if file1_positions == file2_positions:
             comparison['same'][sig] = file1_positions
         else:
-            # Positions are different
             comparison['position_differences'][sig] = {
                 'file1': file1_positions,
                 'file2': file2_positions
@@ -148,10 +133,67 @@ def compare_signatures(file1_results: Dict[str, List[Tuple[int, str]]],
     return comparison
 
 
+def is_printable_ascii(byte: int) -> bool:
+    """Check if a byte represents a printable ASCII character."""
+    return 32 <= byte <= 126
+
+
+def extract_string_before(content: bytes, offset: int, max_search: int = 50, min_length: int = 4) -> Tuple[str, int]:
+    """
+    Search backwards from an offset to find a printable ASCII or UTF-8 string.
+    
+    Args:
+        content: Binary content of the file
+        offset: Starting offset to search backwards from
+        max_search: Maximum bytes to search backwards (default: 50)
+        min_length: Minimum length of a valid string (default: 4)
+        
+    Returns:
+        Tuple of (string, string_start_offset) or (None, None) if no string found
+    """
+    if offset <= 0 or offset > len(content):
+        return None, None
+
+    string_bytes = []
+    i = offset - 1
+
+    while i >= 0 and (offset - i) <= max_search:
+        byte = content[i]
+        
+        if is_printable_ascii(byte):
+            string_bytes.insert(0, byte)
+        else:
+            if len(string_bytes) >= min_length:
+                try:
+                    string = bytes(string_bytes).decode('ascii')
+                    return string, i + 1
+                except UnicodeDecodeError:
+                    try:
+                        string = bytes(string_bytes).decode('utf-8')
+                        return string, i + 1
+                    except UnicodeDecodeError:
+                        pass
+            string_bytes = []
+        
+        i -= 1
+
+    if len(string_bytes) >= min_length:
+        try:
+            string = bytes(string_bytes).decode('ascii')
+            return string, i + 1
+        except UnicodeDecodeError:
+            try:
+                string = bytes(string_bytes).decode('utf-8')
+                return string, i + 1
+            except UnicodeDecodeError:
+                pass
+
+    return None, None
+
+
 def find_byte_differences(file1_path: str, file2_path: str, min_match_length: int = 16) -> List[Tuple[int, int]]:
     """
     Find byte sequence differences between two files.
-    Considers small matching regions (less than min_match_length) as part of a single difference.
     
     Args:
         file1_path: Path to the first file
@@ -168,59 +210,43 @@ def find_byte_differences(file1_path: str, file2_path: str, min_match_length: in
             content1 = f1.read()
             content2 = f2.read()
         
-        # Handle case where files have different lengths
         min_length = min(len(content1), len(content2))
         
-        # Track the current difference region
         diff_start = None
         match_start = None
         
-        # Compare byte by byte
         i = 0
         while i < min_length:
             if content1[i] != content2[i]:
-                # Start of a new difference region or continue current one
                 if diff_start is None:
                     diff_start = i
                     match_start = None
                 elif match_start is not None:
-                    # We were in a matching region, but it's too short
                     if i - match_start < min_match_length:
-                        # Discard this short match and continue the difference region
                         match_start = None
             else:
-                # Matching byte
                 if diff_start is not None and match_start is None:
-                    # First matching byte after a difference
                     match_start = i
                 elif diff_start is not None and match_start is not None:
-                    # Already in a matching region
                     if i - match_start >= min_match_length - 1:
-                        # We've reached the minimum match length, end the difference
                         diff_length = match_start - diff_start
                         differences.append((diff_start, diff_length))
                         diff_start = None
                         match_start = None
             i += 1
         
-        # Handle any ongoing difference at the end of the file
         if diff_start is not None:
             if match_start is not None:
-                # We were in a matching region at the end
                 if min_length - match_start >= min_match_length:
-                    # The match is long enough to split
                     diff_length = match_start - diff_start
                     differences.append((diff_start, diff_length))
                 else:
-                    # Match is too short, include it in the difference
                     diff_length = min_length - diff_start
                     differences.append((diff_start, diff_length))
             else:
-                # No match at the end
                 diff_length = min_length - diff_start
                 differences.append((diff_start, diff_length))
         
-        # Add remaining bytes if files have different lengths
         if len(content1) > len(content2):
             differences.append((min_length, len(content1) - len(content2)))
         elif len(content2) > len(content1):
@@ -241,7 +267,6 @@ def main():
     file1_path = sys.argv[1]
     file2_path = sys.argv[2]
     
-    # Default minimum match length is 16 bytes, but user can specify a different value
     min_match_length = 16
     if len(sys.argv) == 4:
         try:
@@ -260,24 +285,19 @@ def main():
     print(f"Comparing '{file1_path}' with '{file2_path}'")
     print(f"Using minimum match length of {min_match_length} bytes")
     
-    # Read signatures from signatures.lst
     signatures = read_signatures()
     print(f"Loaded {len(signatures)} signatures from signatures.lst")
     
-    # Search for signatures in both files
     print(f"\nSearching for signatures in '{file1_path}'...")
     file1_signatures = search_signatures(file1_path, signatures)
     
     print(f"Searching for signatures in '{file2_path}'...")
     file2_signatures = search_signatures(file2_path, signatures)
     
-    # Compare signature positions
     comparison = compare_signatures(file1_signatures, file2_signatures)
     
-    # Report signature comparison results
     print("\n=== SIGNATURE COMPARISON RESULTS ===")
     
-    # Signatures only in file 1
     if comparison['only_in_file1']:
         print(f"\nSignatures found only in '{os.path.basename(file1_path)}' ({len(comparison['only_in_file1'])}):")
         for sig, positions in comparison['only_in_file1'].items():
@@ -286,7 +306,6 @@ def main():
                 positions_str += f"... ({len(positions) - 5} more)"
             print(f"  - '{sig}': {positions_str}")
     
-    # Signatures only in file 2
     if comparison['only_in_file2']:
         print(f"\nSignatures found only in '{os.path.basename(file2_path)}' ({len(comparison['only_in_file2'])}):")
         for sig, positions in comparison['only_in_file2'].items():
@@ -295,27 +314,19 @@ def main():
                 positions_str += f"... ({len(positions) - 5} more)"
             print(f"  - '{sig}': {positions_str}")
     
-    # Signatures with different positions
     if comparison['position_differences']:
         print(f"\nSignatures found at different positions ({len(comparison['position_differences'])}):")
         for sig, data in comparison['position_differences'].items():
             print(f"  - '{sig}':")
-            
-            # File 1 positions
-            file1_positions = data['file1']
-            file1_str = ', '.join(f"{pos} ({enc})" for pos, enc in file1_positions[:5])
-            if len(file1_positions) > 5:
-                file1_str += f"... ({len(file1_positions) - 5} more)"
+            file1_str = ', '.join(f"{pos} ({enc})" for pos, enc in data['file1'][:5])
+            if len(data['file1']) > 5:
+                file1_str += f"... ({len(data['file1']) - 5} more)"
             print(f"    * '{os.path.basename(file1_path)}': {file1_str}")
-            
-            # File 2 positions
-            file2_positions = data['file2']
-            file2_str = ', '.join(f"{pos} ({enc})" for pos, enc in file2_positions[:5])
-            if len(file2_positions) > 5:
-                file2_str += f"... ({len(file2_positions) - 5} more)"
+            file2_str = ', '.join(f"{pos} ({enc})" for pos, enc in data['file2'][:5])
+            if len(data['file2']) > 5:
+                file2_str += f"... ({len(data['file2']) - 5} more)"
             print(f"    * '{os.path.basename(file2_path)}': {file2_str}")
     
-    # Signatures with same positions (optional, can be commented out)
     if comparison['same']:
         print(f"\nSignatures found at identical positions ({len(comparison['same'])}):")
         for sig, positions in comparison['same'].items():
@@ -324,7 +335,6 @@ def main():
                 positions_str += f"... ({len(positions) - 3} more)"
             print(f"  - '{sig}': {positions_str}")
     
-    # Find and report byte differences
     print("\n=== BYTE SEQUENCE DIFFERENCES ===")
     byte_differences = find_byte_differences(file1_path, file2_path, min_match_length)
     
@@ -332,8 +342,6 @@ def main():
         print("No byte differences found. Files are identical.")
     else:
         total_diff_bytes = sum(length for _, length in byte_differences)
-        
-        # Get file sizes for percentage calculation
         file1_size = os.path.getsize(file1_path)
         file2_size = os.path.getsize(file2_path)
         avg_size = (file1_size + file2_size) / 2
@@ -342,32 +350,42 @@ def main():
         print(f"Found {len(byte_differences)} different byte sequences "
               f"({total_diff_bytes} bytes, {diff_percentage:.2f}% different)")
         
-        # Sort differences by start position
         byte_differences.sort(key=lambda x: x[0])
         
-        # Show differences with hexdump preview
         print("\nDifference details:")
-        for i, (start, length) in enumerate(byte_differences[:20]):  # Limit to first 20 differences
-            print(f"  {i+1}. Position: {start}, Length: {length} bytes")
+        with open(file1_path, 'rb') as f1, open(file2_path, 'rb') as f2:
+            content1 = f1.read()
+            content2 = f2.read()
             
-            # Show preview of the differences in hex
-            try:
-                with open(file1_path, 'rb') as f1, open(file2_path, 'rb') as f2:
-                    f1.seek(start)
-                    f2.seek(start)
-                    
-                    # Read up to 16 bytes for preview
-                    preview_length = min(length, 16)
-                    bytes1 = f1.read(preview_length)
-                    bytes2 = f2.read(preview_length)
-                    
-                    hex1 = ' '.join(f"{b:02x}" for b in bytes1)
-                    hex2 = ' '.join(f"{b:02x}" for b in bytes2)
-                    
-                    print(f"     File1: {hex1}")
-                    print(f"     File2: {hex2}")
-            except Exception as e:
-                print(f"     Error getting hex preview: {e}")
+            for i, (start, length) in enumerate(byte_differences[:20]):
+                print(f"  {i+1}. Position: {start}, Length: {length} bytes")
+                
+                # Search for string before the difference in file1
+                string1, string1_offset = extract_string_before(content1, start)
+                if string1:
+                    print(f"     Preceding string (File1) at offset {string1_offset}: '{string1}'")
+                else:
+                    print(f"     No preceding string found in File1 within 50 bytes")
+                
+                # Search for string before the difference in file2
+                string2, string2_offset = extract_string_before(content2, start)
+                if string2:
+                    print(f"     Preceding string (File2) at offset {string2_offset}: '{string2}'")
+                else:
+                    print(f"     No preceding string found in File2 within 50 bytes")
+                
+                # Hex preview
+                f1.seek(start)
+                f2.seek(start)
+                preview_length = min(length, 16)
+                bytes1 = f1.read(preview_length)
+                bytes2 = f2.read(preview_length)
+                
+                hex1 = ' '.join(f"{b:02x}" for b in bytes1)
+                hex2 = ' '.join(f"{b:02x}" for b in bytes2)
+                
+                print(f"     File1: {hex1}")
+                print(f"     File2: {hex2}")
         
         if len(byte_differences) > 20:
             print(f"\n... and {len(byte_differences) - 20} more differences")
