@@ -7,6 +7,8 @@ venv/
 *.fls
 *.hex
 ecu*.txt
+output.txt
+full_output.txt
 
 # C extensions
 *.so
