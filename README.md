@@ -27,6 +27,15 @@ od -Ax -tx1z stock.fls  >stock-od.hex
 od -Ax -tx1z updated.fls > updated-od.hex
 ```
 
+## Search for strings in the FLS files
+
+Using the binutils strings command
+
+```
+strings -el  *.fls  |sort | uniq -c | sort | tail -10
+strings -es -Ud *.fls  |sort | uniq -c | sort | tail -10
+strings -eB *.fls  |sort | uniq -c | sort | tail -10
+```
 
 ## Perform NGRAM Search
 
