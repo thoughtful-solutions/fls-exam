@@ -1,256 +1,4 @@
-def display_map_info(self, map_name: Optional[str] = None, show_data: bool = False) -> None:
-        """
-        Display information about maps in the ROM.
-        
-        Args:
-            map_name: Specific map to display, or None for all maps
-            show_data: Whether to display the actual map data values
-        """
-        if not self.rom_data:
-            print("Error: ROM data not loaded")
-            return
-        
-        # If a specific map is requested
-        if map_name is not None:
-            if map_name.upper() in self.maps:
-                map_def = self.maps[map_name.upper()]
-                print(f"\n-[ Map: {map_def.name} ]----------------------------------------")
-                print(f"Address: 0x{map_def.address:X}")
-                print(f"Size: {map_def.width}x{map_def.height}")
-                print(f"Type: {map_def.data_type}")
-                print(f"Description: {map_def.description}")
-                
-                if show_data:
-                    # Extract and display data
-                    map_data = self.extract_map_data(map_def)
-                    
-                    if map_data:
-                        # For 1D maps (single value)
-                        if map_def.width == 1 and map_def.height == 1:
-                            value = map_data['scaled_data'][0][0]
-                            print(f"Value: {value:.3f} {map_def.value_unit}")
-                        else:
-                            # For 2D maps, display as a table
-                            print("\nMap Values:")
-                            
-                            # Calculate column width based on values
-                            max_val = 0
-                            for row in map_data['scaled_data']:
-                                for val in row:
-                                    max_val = max(max_val, val)
-                            
-                            # Determine appropriate format width
-                            decimals = 3 if max_val < 100 else (2 if max_val < 1000 else 1)
-                            col_width = len(f"{max_val:.{decimals}f}") + 1
-                            
-                            # Print header row
-                            print(" " * 8, end="")
-                            for x in range(map_def.width):
-                                print(f"{x:>{col_width}}", end="")
-                            print()
-                            
-                            # Print data rows
-                            for y in range(map_def.height):
-                                print(f"{y:>3}: ", end="    ")
-                                for x in range(map_def.width):
-                                    val = map_data['scaled_data'][y][x]
-                                    print(f"{val:>{col_width}.{decimals}f}", end="")
-                                print()
-                            
-                            print(f"\nValues in {map_def.value_unit}")
-            else:
-                print(f"Error: Map '{map_name}' not found")
-                print("Available maps:")
-                for name in sorted(self.maps.keys()):
-                    print(f"  {name}")
-        else:
-            # Display summary of all maps
-            print("\n-[ Map Information ]----------------------------------------")
-            print(f"{'Name':<10} {'Address':<10} {'Size':<10} {'Type':<6} {'Description'}")
-            print("-" * 70)
-            
-            for name, map_def in sorted(self.maps.items()):
-                size_str = f"{map_def.width}x{map_def.height}"
-                print(f"{name:<10} 0x{map_def.address:<8X} {size_str:<10} {map_def.data_type:<6} {map_def.description}")
-    
-    def analyze_maps(self) -> None:
-        """
-        Display a summary of all maps in the ROM.
-        Similar to the -maps option in the original tool.
-        """
-        print("-[ Map Analysis ]----------------------------------------------------------------")
-        
-        # Count maps by size
-        size_counts = {}
-        for name, map_def in self.maps.items():
-            size_key = f"{map_def.width}x{map_def.height}"
-            if size_key not in size_counts:
-                size_counts[size_key] = 0
-            size_counts[size_key] += 1
-        
-        # Display summary
-        print(f"Found {len(self.maps)} maps in ROM")
-        
-        for size, count in sorted(size_counts.items()):
-            print(f"  {size}: {count} maps")
-        
-        # Display all maps
-        self.display_map_info()    def extract_map_data(self, map_def: MapDefinition) -> Dict[str, Any]:
-        """
-        Extract map data from the ROM based on the map definition.
-        
-        Args:
-            map_def: Map definition containing address, dimensions, and data type
-            
-        Returns:
-            Dictionary containing the extracted map data and metadata
-        """
-        if not self.rom_data:
-            return {}
-            
-        if map_def.data_type not in self.DATA_TYPES:
-            print(f"Error: Unknown data type '{map_def.data_type}' for map {map_def.name}")
-            return {}
-            
-        type_info = self.DATA_TYPES[map_def.data_type]
-        size = type_info['size']
-        fmt = type_info['format']  # Unsigned format
-        
-        # Create empty data structure
-        raw_data = []
-        scaled_data = []
-        
-        # Calculate total size needed
-        total_size = map_def.width * map_def.height * size
-        if map_def.address + total_size > self.rom_size:
-            print(f"Error: Map {map_def.name} extends beyond end of ROM")
-            return {}
-        
-        # Extract data from ROM
-        for y in range(map_def.height):
-            raw_row = []
-            scaled_row = []
-            
-            for x in range(map_def.width):
-                pos = map_def.address + (y * map_def.width + x) * size
-                value = struct.unpack('<' + fmt, self.rom_data[pos:pos+size])[0]
-                
-                # Apply scaling
-                scaled_value = value * map_def.value_multiplier
-                
-                raw_row.append(value)
-                scaled_row.append(scaled_value)
-                
-            raw_data.append(raw_row)
-            scaled_data.append(scaled_row)
-        
-        # Extract X-axis values if available
-        x_axis = None
-        if map_def.x_axis_addr is not None:
-            x_axis = []
-            for x in range(map_def.width):
-                pos = map_def.x_axis_addr + x * size
-                if pos + size <= self.rom_size:
-                    value = struct.unpack('<' + fmt, self.rom_data[pos:pos+size])[0]
-                    scaled_value = value * map_def.x_multiplier
-                    x_axis.append(scaled_value)
-        
-        # Extract Y-axis values if available
-        y_axis = None
-        if map_def.y_axis_addr is not None:
-            y_axis = []
-            for y in range(map_def.height):
-                pos = map_def.y_axis_addr + y * size
-                if pos + size <= self.rom_size:
-                    value = struct.unpack('<' + fmt, self.rom_data[pos:pos+size])[0]
-                    scaled_value = value * map_def.y_multiplier
-                    y_axis.append(scaled_value)
-        
-        # Return all data
-        return {
-            'name': map_def.name,
-            'address': map_def.address,
-            'width': map_def.width,
-            'height': map_def.height,
-            'data_type': map_def.data_type,
-            'raw_data': raw_data,
-            'scaled_data': scaled_data,
-            'x_axis': x_axis,
-            'y_axis': y_axis,
-            'value_unit': map_def.value_unit,
-            'x_unit': map_def.x_unit,
-            'y_unit': map_def.y_unit,
-            'description': map_def.description
-        }    def _initialize_maps(self) -> Dict[str, MapDefinition]:
-        """
-        Initialize known map definitions for Ferrari F430 ECUs.
-        These definitions include addresses, dimensions, and scaling factors.
-        
-        Returns:
-            Dictionary of map definitions indexed by name
-        """
-        maps = {}
-        
-        # Common map definitions for Ferrari F430 - addresses and dimensions
-        # These would be adjusted based on actual ECU analysis
-        maps["KFMIRL"] = MapDefinition(
-            name="KFMIRL",
-            address=0x16E80,
-            width=16,
-            height=16,
-            data_type="word",
-            value_multiplier=0.023438,
-            description="Main Fuel Map (Load/RPM)",
-            value_unit="ms"
-        )
-        
-        maps["KFZWOP"] = MapDefinition(
-            name="KFZWOP",
-            address=0x17280,
-            width=16,
-            height=16,
-            data_type="byte",
-            value_multiplier=0.75,
-            description="Ignition Timing Map",
-            value_unit="°BTDC"
-        )
-        
-        maps["KFURL"] = MapDefinition(
-            name="KFURL",
-            address=0x17C80,
-            width=16,
-            height=16,
-            data_type="byte",
-            value_multiplier=0.352941,
-            description="Lambda Target Map",
-            value_unit="λ"
-        )
-        
-        maps["KRKTE"] = MapDefinition(
-            name="KRKTE",
-            address=0x18F00,
-            width=1,
-            height=1,
-            data_type="word",
-            value_multiplier=1.0,
-            description="Rev Limiter",
-            value_unit="RPM"
-        )
-        
-        maps["KFLDRL"] = MapDefinition(
-            name="KFLDRL",
-            address=0x18680,
-            width=16,
-            height=16,
-            data_type="word",
-            value_multiplier=0.023438,
-            description="Torque Limit Map",
-            value_unit="Nm"
-        )
-        
-        # More maps would be defined here...
-        
-        return maps#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 ME7RomTool - F430-Specific Implementation
 
@@ -264,7 +12,6 @@ Options:
     -debug            Enable debugging output
     -dump OFFSET LEN  Dump a section of the ROM (offset and length in hex)
     -scan             Scan for ASCII strings in the ROM
-    -maps             Display map (table) information
     -help             Show this help message
 """
 
@@ -276,40 +23,6 @@ import binascii
 import re
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional, Any, BinaryIO, Set, Union
-
-
-class MapDefinition:
-    """Definition of a map/table in the ECU ROM."""
-    def __init__(self, 
-                 name: str,
-                 address: int,
-                 width: int,
-                 height: int,
-                 data_type: str,
-                 value_multiplier: float = 1.0,
-                 x_axis_addr: Optional[int] = None,
-                 y_axis_addr: Optional[int] = None,
-                 x_multiplier: float = 1.0,
-                 y_multiplier: float = 1.0,
-                 value_unit: str = "",
-                 x_unit: str = "",
-                 y_unit: str = "",
-                 description: str = ""):
-        """Initialize a map definition."""
-        self.name = name
-        self.address = address
-        self.width = width
-        self.height = height
-        self.data_type = data_type.lower()  # 'byte', 'word', or 'dword'
-        self.value_multiplier = value_multiplier
-        self.x_axis_addr = x_axis_addr
-        self.y_axis_addr = y_axis_addr
-        self.x_multiplier = x_multiplier
-        self.y_multiplier = y_multiplier
-        self.value_unit = value_unit
-        self.x_unit = x_unit
-        self.y_unit = y_unit
-        self.description = description
 
 
 class ME7RomTool:
@@ -325,14 +38,6 @@ class ME7RomTool:
     SIZE_1MB = 1024 * 1024
     SIZE_512KB = 512 * 1024
     
-    # Data type sizes
-    DATA_TYPES = {
-        'byte': {'size': 1, 'format': 'B', 'signed_format': 'b'},
-        'word': {'size': 2, 'format': 'H', 'signed_format': 'h'},
-        'dword': {'size': 4, 'format': 'I', 'signed_format': 'i'},
-        'float': {'size': 4, 'format': 'f', 'signed_format': 'f'},
-    }
-    
     def __init__(self, rom_path: str, debug: bool = False):
         """Initialize with path to ROM file."""
         self.rom_path = rom_path
@@ -340,7 +45,6 @@ class ME7RomTool:
         self.rom_size = 0
         self.is_1mb_mode = False
         self.debug = debug
-        self.maps = self._initialize_maps()
         
         # Load ROM file
         self._load_rom_file()
@@ -752,9 +456,6 @@ def main():
     parser.add_argument('-dump', nargs=2, type=str, metavar=('OFFSET', 'LENGTH'), 
                         help='Dump a section of the ROM in hex (offset and length in hex)')
     parser.add_argument('-scan', action='store_true', help='Scan for ASCII strings in the ROM')
-    parser.add_argument('-maps', action='store_true', help='Display map information')
-    parser.add_argument('-map', dest='map_name', help='Display a specific map')
-    parser.add_argument('-data', action='store_true', help='Show map data values (use with -map)')
     args = parser.parse_args()
     
     # Check for required romfile parameter
@@ -785,16 +486,8 @@ def main():
             print("Scanning for ASCII strings in ROM...")
             tool.scan_for_strings(min_length=8)
         
-        # Handle map display if requested
-        if args.maps:
-            tool.analyze_maps()
-        
-        # Handle specific map display if requested
-        if args.map_name:
-            tool.display_map_info(args.map_name, show_data=args.data)
-        
-        # Run the standard analysis if no specific command was given
-        if not args.dump and not args.scan and not args.maps and not args.map_name:
+        # Run the analysis if no specific command was given
+        if not args.dump and not args.scan:
             tool.run_analysis()
 
 
