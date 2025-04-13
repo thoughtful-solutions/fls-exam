@@ -36,10 +36,11 @@ strings -el  *.fls  |sort | uniq -c | sort | tail -10
 strings -es -Ud *.fls  |sort | uniq -c | sort | tail -10
 strings -eB *.fls  |sort | uniq -c | sort | tail -10
 ```
+---
 
-## Perform NGRAM Search
+# Perform NGRAM Search
 
-### N-Gram Analysis for ECU FLS Files
+## N-Gram Analysis for ECU FLS Files
 N-gram analysis is a powerful technique for examining Bosch ECU FLS files from Ferraris when you have multiple file dumps. It helps identify common patterns and structures without prior knowledge of the file format.
 What It Does
 
@@ -48,14 +49,14 @@ Finds sequences that appear across multiple files
 Records the positions where these common sequences appear
 Helps identify file headers, configuration blocks, and data structures
 
-### Why It's Useful for ECU Analysis
+## Why It's Useful for ECU Analysis
 
 Identifies standard ECU components that appear in the same positions
 Locates potential calibration data and configuration parameters
 Finds repeated patterns that might indicate specific ECU functions
 Helps discover Ferrari-specific modifications by comparing different versions
 
-### Implementation Approach
+## Implementation Approach
 The script analyzes your hex dumps by:
 
 Extracting clean hex data from od command output
@@ -68,8 +69,9 @@ This approach can reveal structural similarities in Bosch ECU files and help loc
 ```
 python ngram.py
 ```
+---
 
-## Binary NGRAM Search
+# Binary NGRAM Search
 
 Binary N-Gram Analyzer
 The first script performs n-gram analysis directly on binary files rather than text dumps, which is more efficient and accurate:
@@ -93,8 +95,9 @@ Key features:
 * Configurable n-gram size (default: 8 bytes)
 * Displays both hex and ASCII representations
 
+---
 
-## Signature Finder Tool
+# Signature Finder Tool
 
 
 This script reads signatures from a 'signatures.lst' file in the current directory
@@ -104,10 +107,6 @@ It reports which signatures were found and their positions within each file.
 ```
 python signature_finder.py stock.fls updated.fls stock02.fls updated02.fls
 ```
-
-## FLS File Comparison Tool
-
-Below is an explanation of what the updated `fls_compare.py` script does, formatted as content suitable for a `README.md` file. This description is concise, user-friendly, and includes usage instructions, making it appropriate for someone encountering the tool for the first time.
 
 ---
 
@@ -120,7 +119,7 @@ Below is an explanation of what the updated `fls_compare.py` script does, format
 
 This tool is useful for engineers, developers, or hobbyists analyzing firmware updates, debugging ECU configurations, or reverse-engineering binary files.
 
-### Features
+## Features
 
 - **Signature Search**:
   - Reads signatures from `signatures.lst` (one per line).
@@ -151,7 +150,7 @@ python fls_compare.py <file1.fls> <file2.fls> [min_match_length]
 - `<file2.fls>`: Path to the second `.FLS` file.
 - `[min_match_length]`: Optional integer specifying the minimum number of matching bytes to split differences (default: 16).
 
-### How It Works
+## How It Works
 
 1. **Signature Comparison**:
    - Loads signatures from `signatures.lst`.
@@ -164,14 +163,37 @@ python fls_compare.py <file1.fls> <file2.fls> [min_match_length]
      - Searches backwards (up to 50 bytes) for a printable string in both files.
      - Displays the string (if found) with its offset, followed by a hex dump of the differing bytes.
 
-### Customization
+## Customization
 
 - **Signature File**: Edit `signatures.lst` to include strings relevant to your `.FLS` files.
 - **Search Parameters**: Modify `max_search` (default 50) or `min_length` (default 4) in `extract_string_before()` to adjust string detection.
 - **Output Limits**: Change the script to show more/fewer differences or hex bytes (currently capped at 20 differences, 16 bytes each).
 
-### Limitations
+## Limitations
 
 - Requires a `signatures.lst` file to exist.
 - String search is limited to ASCII and UTF-8 encodings, with a 50-byte backward search range.
 - Does not validate `.FLS` file format—assumes they are binary.
+
+---
+# romscanner.py
+
+romscanner is a specialized tool designed to analyze Bosch ME7.x engine control unit (ECU) firmware files. It's based on the original [ME7RomTool_Ferrari project](https://github.com/360trev/ME7RomTool_Ferrari), reimplementing the C functionality in Python while maintaining the same needle pattern detection system. The tool scans firmware files to identify common structures and patterns using predefined needle patterns from the C implementation's needles.c file.
+
+Key features of ROMScanner include:
+
+* DPP (Data Page Pointer) register extraction - helps identify memory segments in the firmware
+* EPK (Electronic Product Code) information extraction - shows details about the ECU hardware/software
+* String table analysis - locates and extracts important strings from the firmware
+* Map table detection - finds parameter tables used for engine management
+
+## Usage
+
+```
+python romscanner.py [filename] [options]
+Options include:
+
+--maps: Focus on scanning for map tables
+--epk: Extract only EPK information
+--all: Perform all analysis types (default behavior)
+```

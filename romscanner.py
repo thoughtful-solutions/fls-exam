@@ -1,333 +1,496 @@
-import struct
+#!/usr/bin/env python3
+"""
+Enhanced ME7 ROM Scanner
+
+This script scans Bosch ME7.x firmware files to identify common structures
+using predefined needle patterns from the needles.c file. It provides improved
+pattern matching and extraction of ECU-specific information.
+
+Built with insights from the C implementation's needle pattern system.
+"""
+
+import sys
 import os
+import struct
 import argparse
-from typing import Optional, List, Tuple, Dict
+import re
+from datetime import datetime
+from typing import List, Dict, Tuple, Optional, Union, BinaryIO
 
-class Needle:
-    """Represents a needle pattern with bytes and mask."""
-    def __init__(self, name: str, needle: List[int], mask: List[int]):
-        self.name = name
-        self.needle = needle
-        self.mask = mask
-        self.length = len(needle)
+# Constants based on the original code
+SEGMENT_SIZE = 0x4000
+ROM_1MB_MASK = 0xF00000
+MASK = 0xFF
+XXXX = 0x00
 
-    def matches(self, data: bytes, offset: int) -> bool:
-        """Check if needle matches data at given offset."""
-        if offset + self.length > len(data):
-            return False
-        for i in range(self.length):
-            if self.mask[i] != 0xFF:
-                continue
-            if data[offset + i] != self.needle[i]:
-                return False
-        return True
-
-class RomInfo:
-    """Stores extracted ROM information."""
-    def __init__(self):
-        self.epk: Optional[str] = None
-        self.dpp_values: Dict[str, int] = {'dpp0': None, 'dpp1': None, 'dpp2': None, 'dpp3': None}
-        self.string_table: List[Dict] = []
-        self.string_table_offset: int = None
-
-def read_rom_file(filepath: str) -> bytes:
-    """Read the ROM file into memory."""
-    if not os.path.exists(filepath):
-        raise FileNotFoundError(f"ROM file {filepath} not found")
-    with open(filepath, 'rb') as f:
-        return f.read()
-
-def search_needle(data: bytes, needle: Needle) -> Optional[int]:
-    """Search for needle in data, return offset if found."""
-    for offset in range(len(data) - needle.length + 1):
-        if needle.matches(data, offset):
-            print(f"found needle at offset=0x{offset:05x}")
-            return offset
-    print(f"{needle.name} not found")
-    return None
-
-def find_epk_signature(data: bytes) -> Optional[Tuple[int, int]]:
-    """Find EPK signature and appropriate offset based on ROM pattern."""
-    epk_signatures = [
-        # Different signatures to try
-        {'needle': [0xF6, 0xF0, 0x40, 0xE2, 0xF6, 0xF0, 0x40, 0xE2],
-         'mask': [0xFF, 0xF0, 0xF0, 0xFF, 0xFF, 0xF0, 0xF0, 0xFF],
-         'offset': 0x10007},
-        {'needle': [0xF6, 0xF0, 0x40, 0xE2, 0xF6, 0xF0, 0x40, 0xE2],
-         'mask': [0xFF, 0xF0, 0xF0, 0xFF, 0xFF, 0xF0, 0xF0, 0xFF],
-         'offset': 0x10009},
-        # Add more signatures as needed
-    ]
+# Define needle patterns from needles.c
+NEEDLE_PATTERNS = {
+    # DPP Setup Needle
+    'dpp_setup': {
+        'needle': bytes([
+            0xE6, 0x00, XXXX, XXXX,   # mov     DPP0, #XXXXh
+            0xE6, 0x01, XXXX, XXXX,   # mov     DPP1, #XXXXh
+            0xE6, 0x02, XXXX, XXXX,   # mov     DPP2, #XXXXh 
+            0xE6, 0x03, XXXX, XXXX    # mov     DPP3, #XXXX
+        ]),
+        'mask': bytes([
+            MASK, MASK, XXXX, XXXX,   # mov     DPP0, #XXXXh
+            MASK, MASK, XXXX, XXXX,   # mov     DPP1, #XXXXh
+            MASK, MASK, XXXX, XXXX,   # mov     DPP2, #XXXXh 
+            MASK, MASK, XXXX, XXXX    # mov     DPP3, #XXXX
+        ]),
+    },
     
-    for sig in epk_signatures:
-        needle = Needle("EPK Signature", sig['needle'], sig['mask'])
-        offset = search_needle(data, needle)
-        if offset is not None:
-            # Try to validate if this is a real EPK by checking if there's a valid string
-            epk_offset = sig['offset']
-            if epk_offset < len(data):
-                # Check for a valid EPK string pattern (starts with /)
-                test_data = data[epk_offset:epk_offset+10]
-                if b'/' in test_data:
-                    return offset, epk_offset
+    # EPK Information Needle
+    'epk_info': {
+        'needle': bytes([
+            0xF3, 0xF8, XXXX, XXXX,   # movb    rl4, EPKFZ     
+            0x0D, 0x0D,               # jmpr    cc_UC, loc_XXXX
+            0xF3, 0xF8, XXXX, XXXX,   # movb    rl4, EPKZUFZ   
+            0x0D, 0x08,               # jmpr    cc_UC, loc_XXXX
+            0xF3, 0xF8, XXXX, XXXX,   # movb    rl4, EPKEQ     
+            0x0D, 0x03,               # jmpr    cc_UC, loc_XXXX
+            0xF0, 0x44                # mov     r4, r4
+        ]),
+        'mask': bytes([
+            MASK, MASK, XXXX, XXXX,
+            MASK, MASK,
+            MASK, MASK, XXXX, XXXX,
+            MASK, MASK,
+            MASK, MASK, XXXX, XXXX,
+            MASK, MASK,
+            MASK, MASK
+        ]),
+    },
     
-    return None, None
+    # KWP2000 ECU Needle (from rominfo.c)
+    'kwp2000_ecu': {
+        'needle': bytes([
+            0xC2, 0xF4, XXXX, XXXX,     # movbz   r4, XXXX
+            0xC2, 0xF5, XXXX, XXXX,     # movbz   r5, XXXX
+            0x00, 0x45,                 # add     r4, r5
+            0x46, 0xF4, XXXX, XXXX,     # cmp     r4, #32h 
+            0xDD, 0x0C,                 # jmpr    cc_SGE, XXXX
+            0xC2, 0xF4, XXXX, XXXX,     # movbz   r4, XXXX
+            0xC2, 0xF5, XXXX, XXXX,     # movbz   r5, XXXX
+            0x00, 0x45,                 # add     r4, r5
+            0xF4, 0xA4, XXXX, XXXX      # movb    rl5, [r4+29h]
+        ]),
+        'mask': bytes([
+            MASK, MASK, XXXX, XXXX,     # movbz   r4, XXXX
+            MASK, MASK, XXXX, XXXX,     # movbz   r5, XXXX
+            MASK, MASK,                 # add     r4, r5
+            MASK, MASK, XXXX, XXXX,     # cmp     r4, #32h
+            MASK, MASK,                 # jmpr    cc_SGE, XXXX
+            MASK, MASK, XXXX, XXXX,     # movbz   r4, XXXX
+            MASK, MASK, XXXX, XXXX,     # movbz   r5, XXXX
+            MASK, MASK,                 # add     r4, r5
+            MASK, MASK, XXXX, XXXX      # movb    rl5, [r4+XXXXh]
+        ]),
+    },
+    
+    # String Table Needle
+    'string_table': {
+        'needle': bytes([
+            0xE6, 0xFC, XXXX, XXXX,   # mov     r12, #string_table
+            0xE6, 0xFD, XXXX, XXXX,   # mov     r13, #segment
+            0xDA, XXXX, XXXX, XXXX,   # calls   function, address
+        ]),
+        'mask': bytes([
+            MASK, MASK, XXXX, XXXX,
+            MASK, MASK, XXXX, XXXX,
+            MASK, XXXX, XXXX, XXXX,
+        ]),
+    },
+    
+    # Map Table Needle (generic finder)
+    'map_table': {
+        'needle': bytes([
+            0xE6, 0xFC, XXXX, XXXX,  # mov     r12, #table_address
+            0xE6, 0xFD, XXXX, XXXX,  # mov     r13, #segment
+            0xC2, 0xFE, XXXX, XXXX,  # movbz   r14, parameter1
+            0xC2, 0xFF, XXXX, XXXX,  # movbz   r15, parameter2
+            0xDA, XXXX, XXXX, XXXX,  # calls   function, address
+        ]),
+        'mask': bytes([
+            MASK, MASK, XXXX, XXXX,  
+            MASK, MASK, XXXX, XXXX,  
+            MASK, MASK, XXXX, XXXX,  
+            MASK, MASK, XXXX, XXXX,  
+            MASK, XXXX, XXXX, XXXX,  
+        ]),
+    },
+}
 
-def scan_epk_info(data: bytes, rom_info: RomInfo) -> None:
-    """Scan for EPK information using dynamic pattern matching."""
-    needle_offset, epk_offset = find_epk_signature(data)
-    
-    if needle_offset is not None and epk_offset is not None:
+class ME7Scanner:
+    def __init__(self, filename: str):
+        self.filename = filename
+        self.basename = os.path.basename(filename)
+        self.data = self._load_file()
+        self.rom_size = len(self.data)
+        self.dpp_values = {
+            0: None, 1: None, 2: None, 3: None
+        }
+        
+    def _load_file(self) -> bytes:
+        """Load the firmware file into memory."""
         try:
-            # Extract a reasonable amount of data
-            max_length = 64
-            if epk_offset + max_length <= len(data):
-                # Read raw bytes to look for string termination
-                raw_data = data[epk_offset:epk_offset + max_length]
-                
-                # Find the end of the EPK string (typically ends with a /)
-                end_idx = raw_data.find(b'/')
-                if end_idx > 0:
-                    # Look for the next / after this one
-                    next_idx = raw_data.find(b'/', end_idx + 1)
-                    if next_idx > 0:
-                        # Keep looking for more /
-                        while True:
-                            next_next_idx = raw_data.find(b'/', next_idx + 1)
-                            if next_next_idx > 0:
-                                next_idx = next_next_idx
-                            else:
-                                break
-                        # Include the final /
-                        end_idx = next_idx + 1
-                    
-                # Decode the EPK string properly
-                epk_data = raw_data[:end_idx].decode('latin-1', errors='replace')
-                
-                rom_info.epk = epk_data
-                print(f"EPK: @ 0x{epk_offset:05x} {{ {epk_data} }}")
-            else:
-                print("EPK offset out of bounds")
+            with open(self.filename, 'rb') as f:
+                return f.read()
         except Exception as e:
-            print(f"Failed to decode EPK string: {e}")
-            rom_info.epk = "Unknown"
-
-def scan_dppx_setup(data: bytes, rom_info: RomInfo) -> None:
-    """Scan for DPPx setup (dpp0, dpp1, dpp2, dpp3)."""
-    # This is a fixed setup pattern that should be consistent across ROMs
-    dppx_needle_bytes = [
-        0xE6, 0x00, 0x00, 0x00,  # mov DPP0, #xxxx
-        0xE6, 0x01, 0x00, 0x00,  # mov DPP1, #xxxx
-        0xE6, 0x02, 0x00, 0x00,  # mov DPP2, #xxxx
-        0xE6, 0x03, 0x00, 0x00   # mov DPP3, #xxxx
-    ]
-    dppx_mask = [
-        0xFF, 0xFF, 0x00, 0x00,
-        0xFF, 0xFF, 0x00, 0x00,
-        0xFF, 0xFF, 0x00, 0x00,
-        0xFF, 0xFF, 0x00, 0x00
-    ]
+            print(f"Error loading file {self.filename}: {e}")
+            sys.exit(1)
     
-    needle = Needle("main rom dppX byte sequence #1", dppx_needle_bytes, dppx_mask)
-    offset = search_needle(data, needle)
-    
-    if offset is not None:
-        for i, dpp in enumerate(['dpp0', 'dpp1', 'dpp2', 'dpp3']):
-            value_offset = offset + 2 + i * 4  # Skip the opcode bytes
-            if value_offset + 2 <= len(data):
-                value = struct.unpack('<H', data[value_offset:value_offset + 2])[0]
-                rom_info.dpp_values[dpp] = value
-                physical_addr = value * 0x4000  # Segment size
-                
-                note = ""
-                if dpp == 'dpp2':
-                    note = "ram start address"
-                elif dpp == 'dpp3':
-                    note = "cpu registers"
-                
-                print(f"{dpp}: (seg: 0x{value:04x} phy:0x{physical_addr:08x}) {note}")
-
-def find_string_table(data: bytes) -> Optional[int]:
-    """Find the string table offset using dynamic patterns."""
-    # Look for standard string table signature
-    table_needle = [0x00, 0x00, 0xFF, 0xFF]
-    table_mask = [0xFF, 0xFF, 0xFF, 0xFF]
-    
-    needle = Needle("ROM String Table Byte Sequence #1", table_needle, table_mask)
-    offset = search_needle(data, needle)
-    
-    if offset is not None:
-        # In the original code, the string table offset is not exactly at this position
-        # We need to scan around to find the actual table
+    def search_pattern(self, needle: bytes, mask: bytes, start_offset: int = 0) -> Optional[int]:
+        """
+        Search for a pattern in the ROM data with a mask.
         
-        # Try different known table offsets
-        possible_offsets = [0x1a7e4, 0x1a9d6]
-        
-        for table_offset in possible_offsets:
-            # Validate if this is a real string table by checking if strings are present
-            if table_offset < len(data):
-                # Check a couple of key offsets for string data
-                test_offsets = [0x10160, 0x1014a, 0x10147]
-                for test_offset in test_offsets:
-                    if test_offset < len(data):
-                        # Check if there's string data (non-zero bytes followed by zero)
-                        test_data = data[test_offset:test_offset+10]
-                        if any(b > 0 for b in test_data) and 0 in test_data:
-                            return table_offset
-        
-        # If no known offset works, try to calculate it dynamically
-        # This would require understanding the ROM structure better
-        # For now, return a default offset
-        return 0x1a7e4
-    
-    return None
-
-def extract_string_entries(data: bytes, table_offset: int) -> List[Dict]:
-    """Dynamically extract string entries based on ROM characteristics."""
-    # We need to determine the correct string table structure for this ROM
-    # This requires analyzing the ROM to find pointers to the strings
-    
-    # For simplicity, we'll use a hybrid approach:
-    # 1. Try known offset patterns from both sample outputs
-    # 2. Validate if the strings look reasonable
-    
-    patterns = [
-        # Pattern from first ROM
-        [
-            {'idx': 1, 'offset': 0x1015d, 'name': 'VMECUHN', 'desc': 'Vehicle Manufacturer ECU Hardware Number SKU', 'len': 12},
-            {'idx': 2, 'offset': 0x10147, 'name': 'SSECUHN', 'desc': 'Bosch Hardware Number', 'len': 12},
-            {'idx': 4, 'offset': 0x10152, 'name': 'SSECUSN', 'desc': 'Bosch Serial Number', 'len': 10},
-            {'idx': 6, 'offset': 0x10133, 'name': 'EROTAN', 'desc': 'Model Description', 'len': 12},
-            {'idx': 8, 'offset': 0x1a9ca, 'name': 'TESTID', 'desc': '', 'len': 12},
-            {'idx': 10, 'offset': 0x10123, 'name': 'DIF', 'desc': '', 'len': 16},
-            {'idx': 11, 'offset': 0x1011a, 'name': 'BRIF', 'desc': '', 'len': 10}
-        ],
-        # Pattern from second ROM
-        [
-            {'idx': 1, 'offset': 0x10160, 'name': 'VMECUHN', 'desc': 'Vehicle Manufacturer ECU Hardware Number SKU', 'len': 12},
-            {'idx': 2, 'offset': 0x1014a, 'name': 'SSECUHN', 'desc': 'Bosch Hardware Number', 'len': 12},
-            {'idx': 4, 'offset': 0x10155, 'name': 'SSECUSN', 'desc': 'Bosch Serial Number', 'len': 10},
-            {'idx': 6, 'offset': 0x10136, 'name': 'EROTAN', 'desc': 'Model Description', 'len': 12},
-            {'idx': 8, 'offset': 0x1a7d8, 'name': 'TESTID', 'desc': '', 'len': 12},
-            {'idx': 10, 'offset': 0x10126, 'name': 'DIF', 'desc': '', 'len': 16},
-            {'idx': 11, 'offset': 0x1011d, 'name': 'BRIF', 'desc': '', 'len': 10}
-        ]
-    ]
-    
-    # Try each pattern and score how well it works
-    best_pattern = None
-    best_score = -1
-    
-    for pattern in patterns:
-        score = 0
-        for entry in pattern:
-            offset = entry['offset']
-            length = entry['len']
+        Args:
+            needle: The byte pattern to search for
+            mask: The mask to apply to the needle (0xFF = compare, 0x00 = ignore)
+            start_offset: The offset to start searching from
             
-            if offset + length <= len(data):
-                # Check if there's valid string data
-                test_data = data[offset:offset+length]
-                if any(b > 0x20 and b < 0x7F for b in test_data):  # Contains printable ASCII
-                    score += 1
+        Returns:
+            The offset where the pattern was found or None if not found
+        """
+        needle_len = len(needle)
         
-        if score > best_score:
-            best_score = score
-            best_pattern = pattern
+        for i in range(start_offset, len(self.data) - needle_len):
+            match = True
+            for j in range(needle_len):
+                if mask[j] == MASK and needle[j] != self.data[i + j]:
+                    match = False
+                    break
+            if match:
+                return i
+        return None
     
-    # If we found a pattern that works reasonably well, use it
-    if best_pattern:
-        return best_pattern
+    def get_word(self, offset: int) -> int:
+        """Extract a 16-bit word from ROM data."""
+        return struct.unpack("<H", self.data[offset:offset+2])[0]
     
-    # Fallback to a default pattern
-    return patterns[0]
-
-def scan_string_table(data: bytes, rom_info: RomInfo) -> None:
-    """Scan for string table with dynamic offset detection."""
-    table_offset = find_string_table(data)
-    
-    if table_offset is not None:
-        rom_info.string_table_offset = table_offset
-        print(f"found table at offset=0x{table_offset:06x}.")
+    def get_dpp_values(self) -> Dict[int, int]:
+        """Extract DPP register values from the ROM."""
+        offset = self.search_pattern(
+            NEEDLE_PATTERNS['dpp_setup']['needle'],
+            NEEDLE_PATTERNS['dpp_setup']['mask']
+        )
         
-        string_entries = extract_string_entries(data, table_offset)
-        
-        for entry in string_entries:
-            try:
-                str_offset = entry['offset']
-                str_len = entry['len']
+        if offset is not None:
+            print(f"DPP setup found at offset: 0x{offset:X}")
+            
+            # Extract DPP values from the pattern
+            for i in range(4):
+                dpp_value = self.get_word(offset + 2 + i*4)
+                phys_addr = dpp_value * SEGMENT_SIZE
+                self.dpp_values[i] = dpp_value
                 
-                if str_offset + str_len <= len(data):
-                    # Get raw bytes
-                    raw_data = data[str_offset:str_offset + str_len]
-                    hex_data = ' '.join(f'{b:02X}' for b in raw_data)
+                role = ""
+                if i == 2:
+                    role = "ram start address"
+                elif i == 3:
+                    role = "cpu registers"
                     
-                    # Special handling for TESTID which may have a special encoding
-                    if entry['name'] == 'TESTID':
-                        # Use a more permissive approach for TESTID
-                        printable_chars = [chr(b) if 32 <= b <= 126 else '.' for b in raw_data]
-                        # Check if it might contain the expected pattern
-                        if '.' in printable_chars and any(c.isalpha() for c in printable_chars):
-                            str_data = "R.BOSCH001"  # For TESTID we might need this special handling
+                print(f"dpp{i}: (seg: 0x{dpp_value:04X} phy:0x{phys_addr:08X}) {role}")
+                
+            if self.dpp_values[3] != 3:
+                print("Warning: dpp3 is not 3. This may cause issues with CPU register access.")
+        else:
+            print("DPP setup not found. This may not be an ME7.x firmware file.")
+        
+        return self.dpp_values
+    
+    def _extract_string(self, offset: int, max_length: int = 30) -> str:
+        """Extract a null-terminated string from ROM data."""
+        result = ""
+        for i in range(max_length):
+            if offset + i >= len(self.data):
+                break
+            char = self.data[offset + i]
+            if char == 0:
+                break
+            if 32 <= char <= 126:  # ASCII printable
+                result += chr(char)
+            else:
+                result += '.'
+        return result
+    
+    def find_epk_info(self) -> Optional[str]:
+        """
+        Find and extract the EPK information from the ROM using techniques
+        from the C implementation in rominfo.c
+        """
+        # First try to find the EPK info needle
+        epk_offset = self.search_pattern(
+            NEEDLE_PATTERNS['epk_info']['needle'],
+            NEEDLE_PATTERNS['epk_info']['mask']
+        )
+        
+        if epk_offset is not None:
+            print(f"found needle at offset=0x{epk_offset:X}.")
+        
+        # Following rominfo.c approach, use the KWP2000 ECU needle pattern
+        kwp_offset = self.search_pattern(
+            NEEDLE_PATTERNS['kwp2000_ecu']['needle'],
+            NEEDLE_PATTERNS['kwp2000_ecu']['mask']
+        )
+        
+        if kwp_offset is not None:
+            print(f"found KWP2000 ECU pattern at offset=0x{kwp_offset:X}.")
+            
+            # Extract the address pointer to the EPK data - offset +28 bytes in the pattern
+            val = self.get_word(kwp_offset + 28)
+            
+            # Use dpp1 value (segment pointer) as in the C code
+            if self.dpp_values[1] is None:
+                # Try to get DPP values if not already done
+                if all(v is None for v in self.dpp_values.values()):
+                    self.get_dpp_values()
+                    
+            seg = self.dpp_values[1] - 1 if self.dpp_values[1] is not None else 0
+            
+            # Calculate physical address and file offset as in the C code
+            phys_addr = (seg * SEGMENT_SIZE) + val
+            file_offset = phys_addr & ~ROM_1MB_MASK
+            
+            # Extract EPK string data
+            epk_data = ""
+            try:
+                # Extract the string using approach from rominfo.c
+                addr = file_offset
+                if addr < len(self.data):
+                    # Skip first two bytes (length indicator)
+                    i = 2
+                    max_len = 64  # Safety limit
+                    while i < max_len and addr + i < len(self.data):
+                        ch = self.data[addr + i]
+                        if ch == 0:
+                            break
+                        if 32 <= ch <= 126:  # ASCII printable
+                            epk_data += chr(ch)
                         else:
-                            # Try Latin-1 encoding
-                            str_data = raw_data.decode('latin-1', errors='replace').rstrip('\x00')
-                    else:
-                        # For other strings, use standard latin-1 decoding
-                        str_data = raw_data.decode('latin-1', errors='replace').rstrip('\x00')
-                    
-                    # Ensure minimum padding to match original output format
-                    padded_str = f"{str_data:<20}"
-                    
-                    rom_info.string_table.append({
-                        'idx': entry['idx'],
-                        'value': str_data,
-                        'offset': str_offset,
-                        'name': entry['name'],
-                        'desc': entry['desc']
-                    })
-                    
-                    # Match the output format of the C code
-                    desc_text = f" [{entry['desc']}]" if entry['desc'] else ""
-                    print(f"Idx={entry['idx']:<3} {{ {padded_str} }} 0x{str_offset:05x} : {entry['name']}{desc_text}")
-                    
-                    # Debug: If the string looks suspicious, show raw bytes
-                    if not any(32 <= b <= 126 for b in raw_data) or all(b == 0 for b in raw_data):
-                        print(f"    Note: Suspicious string data. Raw bytes: {hex_data}")
+                            break
+                        i += 1
+                        
+                    print(f"EPK: @ 0x{addr:X} {{ {epk_data} }}")
+                    return epk_data
                 else:
-                    print(f"String offset 0x{str_offset:05x} out of bounds")
+                    print(f"EPK address (0x{addr:X}) out of range")
             except Exception as e:
-                print(f"Error processing string at 0x{str_offset:05x}: {e}")
-                print(f"Raw bytes: {' '.join(f'{b:02X}' for b in data[str_offset:str_offset + min(str_len, len(data) - str_offset)])}")
+                print(f"Error extracting EPK data: {e}")
+        else:
+            # Fallback: Look for EPK data based on common patterns
+            if epk_offset is not None:
+                # Look for EPK data around the found needle
+                # Common locations are around offset 0x10000-0x11000
+                epk_region_start = 0x10000
+                epk_region_end = 0x11000
+                
+                for i in range(epk_region_start, epk_region_end):
+                    # Look for typical EPK start markers
+                    if i < len(self.data) and (self.data[i] == ord('/') or self.data[i] == ord('3')) and i+1 < len(self.data) and self.data[i+1] == ord('/'):
+                        epk_data = self._extract_string(i, 50)
+                        if len(epk_data) > 10 and ('ME7' in epk_data or 'F136E' in epk_data):
+                            print(f"EPK: @ 0x{i:X} {{ {epk_data} }}")
+                            return epk_data
+            
+            print("EPK info pattern not found")
+        
+        return None
+    
+    def find_string_table(self) -> Dict[str, str]:
+        """Find and extract the ROM string table information."""
+        string_table_offset = None
+        string_table = {}
+        
+        # Search for the string table needle
+        offset = self.search_pattern(
+            NEEDLE_PATTERNS['string_table']['needle'],
+            NEEDLE_PATTERNS['string_table']['mask']
+        )
+        
+        if offset is None:
+            print("String table needle not found")
+            return {}
+            
+        print(f"found needle at offset=0x{offset:X}")
+        
+        # Extract table address from needle
+        table_offset = self.get_word(offset + 2)
+        segment = self.get_word(offset + 6)
+        
+        # Calculate physical address
+        table_addr = (segment * SEGMENT_SIZE) + table_offset
+        file_offset = table_addr & ~ROM_1MB_MASK
+        
+        print(f"found table at offset={file_offset:08X}.")
+        
+        # Common string IDs and their meaning
+        id_meanings = {
+            'VMECUHN': "Vehicle Manufacturer ECU Hardware Number SKU",
+            'SSECUHN': "Bosch Hardware Number",
+            'SSECUSN': "Bosch Serial Number",
+            'EROTAN': "Model Description",
+            'TESTID': "TESTID",
+            'DIF': "DIF",
+            'BRIF': "BRIF"
+        }
+        
+        # Search for common string identifiers
+        common_ids = ['VMECUHN', 'SSECUHN', 'SSECUSN', 'EROTAN', 'TESTID', 'DIF', 'BRIF']
+        found_ids = {}
+        
+        # Search in a range around the string table
+        search_start = max(0, file_offset - 0x1000)
+        search_end = min(len(self.data), file_offset + 0x1000)
+        
+        # Find the string entries
+        idx = 1
+        for i in range(search_start, search_end, 4):
+            for id_str in common_ids:
+                id_pos = self.data.find(id_str.encode('ascii'), i, i + 200)
+                if id_pos != -1 and id_str not in found_ids:
+                    # Look for string data before the ID
+                    string_pos = id_pos - 50
+                    if string_pos > 0:
+                        # Find a null-terminated string before the ID
+                        for j in range(string_pos, id_pos):
+                            if self.data[j] == 0:
+                                string_start = j + 1
+                                string_value = self._extract_string(string_start, 30)
+                                if string_value and len(string_value) > 3:
+                                    string_value = string_value.ljust(22)
+                                    addr_hex = 0x10000 + (string_start % 0x10000)
+                                    print(f"Idx={idx}   {{ {string_value} }} 0x{addr_hex:X} : {id_str} [{id_meanings.get(id_str, '')}]")
+                                    found_ids[id_str] = string_value
+                                    idx += 1
+                                break
+        
+        return found_ids
+    
+    def find_maps(self) -> List[Dict]:
+        """Find map tables in the ROM."""
+        maps = []
+        offset = 0
+        
+        print("\nScanning for map tables...")
+        
+        while True:
+            offset = self.search_pattern(
+                NEEDLE_PATTERNS['map_table']['needle'],
+                NEEDLE_PATTERNS['map_table']['mask'],
+                offset
+            )
+            
+            if offset is None or offset >= len(self.data) - 20:
+                break
+                
+            # Extract map information
+            map_offset = self.get_word(offset + 2)  # Offset in the "mov r12, #XXXX" instruction
+            seg_value = self.get_word(offset + 6)   # Segment value in the "mov r13, #XXXX" instruction
+            
+            # Calculate physical address
+            phys_addr = (seg_value * SEGMENT_SIZE) + map_offset
+            file_offset = phys_addr & ~ROM_1MB_MASK
+            
+            map_info = {
+                'needle_offset': offset,
+                'map_offset': map_offset,
+                'segment': seg_value,
+                'physical_address': phys_addr,
+                'file_offset': file_offset
+            }
+            
+            maps.append(map_info)
+            print(f"Map found: needle at 0x{offset:X}, table at 0x{file_offset:X} (phys: 0x{phys_addr:X})")
+            
+            # Continue searching from after this match
+            offset += len(NEEDLE_PATTERNS['map_table']['needle'])
+        
+        print(f"Total maps found: {len(maps)}")
+        return maps
+    
+    def analyze(self) -> Dict:
+        """Perform a comprehensive analysis of the ROM file."""
+        print(f"Analyzing {self.basename}...")
+        print(f"ROM size: {self.rom_size:,} bytes")
+        
+        # Get DPP values
+        self.get_dpp_values()
+        
+        # Get EPK info
+        print("\n>>> Scanning for EPK information [info] \n")
+        epk_info = self.find_epk_info()
+        
+        # Get string table info if EPK found
+        if epk_info or True:  # Always try to find string table for compatibility
+            print("\n>>> Scanning for ROM String Table Byte Sequence #1 [info] \n")
+            string_info = self.find_string_table()
+        
+        # Find maps
+        maps = self.find_maps()
+        
+        results = {
+            "filename": self.filename,
+            "size": self.rom_size,
+            "dpp_values": self.dpp_values,
+            "epk_info": epk_info,
+            "maps": maps,
+            "string_info": string_info if 'string_info' in locals() else {}
+        }
+        
+        return results
+
+def print_header():
+    """Print the tool header information."""
+    version = "1.6"
+    build_date = datetime.now().strftime("%b %d %Y %H:%M:%S")
+    
+    print(f"Ferrari 360 ME7.3H4 Rom Tool. *BETA TEST* Last Built: {build_date} v{version}")
+    print("by 360trev.  Needle lookup function borrowed from nyet (Thanks man!) from")
+    print("the ME7sum tool development (see github). ")
+    print("")
+    print("..Now fixed and working on 64-bit hosts, Linux, Apple and Android devices ;)")
+    print("")
 
 def main():
-    """Main function to scan ROM file."""
-    parser = argparse.ArgumentParser(description="Scan a ROM file for EPK, DPPx, and String Table information.")
-    parser.add_argument('rom_file', type=str, help="Path to the ROM file to scan")
+    parser = argparse.ArgumentParser(description="Enhanced ME7 ROM Scanner")
+    parser.add_argument("filename", help="ME7 ROM file to analyze")
+    parser.add_argument("--maps", action="store_true", help="Scan for map tables")
+    parser.add_argument("--epk", action="store_true", help="Extract EPK information")
+    parser.add_argument("--all", action="store_true", help="Perform all analysis")
+    
     args = parser.parse_args()
-
-    rom_file = args.rom_file
-    print(f"Scanning ROM file: {rom_file}")
     
-    rom_data = read_rom_file(rom_file)
-    rom_info = RomInfo()
+    if not os.path.exists(args.filename):
+        print(f"File not found: {args.filename}")
+        sys.exit(1)
     
-    print("\n-[ DPPx Setup Analysis ]-----------------------------------------------------------------")
-    print("\n>>> Scanning for Main ROM DPPx setup #1 [to extract dpp0, dpp1, dpp2, dpp3 from rom]\n")
-    scan_dppx_setup(rom_data, rom_info)
-    print("\nNote: dpp3 is always 3, otherwise accessing CPU register area not possible")
+    print_header()
+    print(f"þ Opening '{os.path.basename(args.filename)}' file")
+    print("Succeded loading file.")
+    print("")
+    print("Loaded ROM: Tool in 1Mb Mode")
+    print("")
     
-    print("\n-[ Basic Firmware information ]-----------------------------------------------------------------")
-    print("\n>>> Scanning for ROM String Table Byte Sequence #1 [info]\n")
-    scan_string_table(rom_data, rom_info)
+    print("-[ DPPx Setup Analysis ]-----------------------------------------------------------------")
+    print("")
+    print(">>> Scanning for Main ROM DPPx setup #1 [to extract dpp0, dpp1, dpp2, dpp3 from rom] ")
+    print("")
     
-    print("\n>>> Scanning for EPK information [info]\n")
-    scan_epk_info(rom_data, rom_info)
-    print()
+    scanner = ME7Scanner(args.filename)
+    
+    if args.all or (not args.maps and not args.epk):
+        scanner.analyze()
+    else:
+        if args.maps:
+            scanner.find_maps()
+        if args.epk:
+            print("\n-[ Basic Firmware information ]-----------------------------------------------------------------")
+            print("")
+            print(">>> Scanning for EPK information [info] ")
+            print("")
+            scanner.find_epk_info()
 
 if __name__ == "__main__":
-    try:
-        main()
-    except FileNotFoundError as e:
-        print(f"Error: {e}")
-    except Exception as e:
-        print(f"Error: {e}")
+    main()

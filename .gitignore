@@ -5,7 +5,9 @@ __pycache__/
 
 venv/
 *.fls
+*.bin
 *.hex
+output*
 ecu*.txt
 output.txt
 full_output.txt
