@@ -6,7 +6,7 @@ fork https://github.com/nyetwurk/ME7Sum/
 https://github.com/chaoschris/ME7Sum
 ```
 
-Iâ€™ve reviewed the GitHub repository information. Based on the details provided in the README, hereâ€™s an analysis of what this codebase does:
+I’ve reviewed the GitHub repository information. Based on the details provided in the README, here’s an analysis of what this codebase does:
 
 ### Purpose
 The `ME7Sum` tool in this repository is designed for **managing Bosch Motronic ME7.1 firmware dumps**, specifically targeting the verification and correction of **checksums and cyclic redundancy checks (CRCs)** within these firmware binaries. The Bosch ME7.1 is an engine control unit (ECU) commonly used in automotive applications, particularly in Volkswagen-Audi Group (VAG) vehicles. This tool ensures that firmware images remain valid and flashable by checking and correcting their integrity data after modifications.
@@ -54,16 +54,16 @@ The `ME7Sum` tool in this repository is designed for **managing Bosch Motronic M
 
 ### Building the Tool
 - **Unix/Cygwin**: Run `make` to build the tool.
-- **Windows**: Use Microsoft Visual Studioâ€™s `nmake` with `build clean` followed by `build`.
+- **Windows**: Use Microsoft Visual Studio’s `nmake` with `build clean` followed by `build`.
 
 ### Intended Audience
-This codebase is aimed at automotive enthusiasts, ECU tuners, and developers working with Bosch ME7.1 firmware, particularly in the VAG community. Itâ€™s useful for:
+This codebase is aimed at automotive enthusiasts, ECU tuners, and developers working with Bosch ME7.1 firmware, particularly in the VAG community. It’s useful for:
 - Validating firmware integrity before flashing to an ECU.
 - Correcting checksums/CRCs after manual or third-party modifications to the firmware.
 - Ensuring binaries remain functional and error-free for ECU programming.
 
 ### Context and Origins
-- This repository appears to be related to other forks of `ME7Sum`, such as `nyetwurk/ME7Sum` and `360trev/ME7Sum`, suggesting itâ€™s part of a broader community effort to maintain and improve this tool. Links to forums (Nefmoto) and other GitHub repos indicate collaboration or derivation from those projects.
+- This repository appears to be related to other forks of `ME7Sum`, such as `nyetwurk/ME7Sum` and `360trev/ME7Sum`, suggesting it’s part of a broader community effort to maintain and improve this tool. Links to forums (Nefmoto) and other GitHub repos indicate collaboration or derivation from those projects.
 
 ### Conclusion
 The codebase is a specialized utility for **checking and correcting checksums and CRCs in Bosch ME7.1 firmware dumps**, primarily for VAG vehicles. It ensures that modified firmware binaries remain valid for ECU flashing by updating their integrity data. It does not assist with making functional changes to the firmware (e.g., tuning parameters) but rather serves as a post-modification tool to maintain compatibility. Its limitations highlight the need for caution with modified or non-standard binaries, and its open-source nature invites contributions from the community.
