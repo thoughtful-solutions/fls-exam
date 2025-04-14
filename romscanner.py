@@ -14,6 +14,7 @@ import os
 import struct
 import argparse
 import re
+import csv
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional, Union, BinaryIO
 
@@ -119,6 +120,80 @@ NEEDLE_PATTERNS = {
             MASK, MASK, XXXX, XXXX,  
             MASK, XXXX, XXXX, XXXX,  
         ]),
+    },
+}
+
+# Known map definitions from table_spec.c
+KNOWN_MAPS = {
+    'KFAGK': {
+        'desc': "Exhaust Flap Control Table",
+        'x_num_width': 1,     # UBYTE
+        'y_num_width': 1,     # UBYTE
+        'x_axis_width': 1,    # UBYTE
+        'y_axis_width': 1,    # UBYTE
+        'cell_width': 1,      # UBYTE
+        'x_axis_conv': 0.025, # Conversion factor
+        'x_axis_desc': "Upm", # Description
+        'y_axis_conv': 1.333333,
+        'y_axis_desc': "%",
+        'cell_conv': 1.0,
+        'cell_desc': ""
+    },
+    'KFPED': {
+        'desc': "Throttle Pedal Characteristic",
+        'x_num_width': 2,     # UWORD
+        'y_num_width': 2,     # UWORD 
+        'x_axis_width': 2,    # UWORD
+        'y_axis_width': 2,    # UWORD
+        'cell_width': 2,      # UWORD
+        'x_axis_conv': 655.35,
+        'x_axis_desc': "% PED",
+        'y_axis_conv': 4.0,
+        'y_axis_desc': "U/min",
+        'cell_conv': 327.68,
+        'cell_desc': "%"
+    },
+    'KFKHFM': {
+        'desc': "MAF Sensor correction by Load and RPM",
+        'x_num_width': 1,     # UBYTE
+        'y_num_width': 1,     # UBYTE 
+        'x_axis_width': 1,    # UBYTE
+        'y_axis_width': 1,    # UBYTE
+        'cell_width': 1,      # UBYTE
+        'x_axis_conv': 0.025,
+        'x_axis_desc': "Upm",
+        'y_axis_conv': 1.333333,
+        'y_axis_desc': "%",
+        'cell_conv': 1.0,
+        'cell_desc': ""
+    },
+    'KFNW': {
+        'desc': "Variable Camshaft Control",
+        'x_num_width': 1,     # UBYTE
+        'y_num_width': 1,     # UBYTE 
+        'x_axis_width': 1,    # UBYTE
+        'y_axis_width': 1,    # UBYTE
+        'cell_width': 1,      # UBYTE
+        'x_axis_conv': 0.025,
+        'x_axis_desc': "Upm",
+        'y_axis_conv': 1.333333,
+        'y_axis_desc': "%",
+        'cell_conv': 1.0,
+        'cell_desc': ""
+    },
+    'KFZW': {
+        'desc': "Ignition Timing",
+        'x_num_width': 1,     # UBYTE
+        'y_num_width': 1,     # UBYTE 
+        'x_axis_width': 1,    # UBYTE
+        'y_axis_width': 1,    # UBYTE
+        'cell_width': 1,      # UBYTE
+        'x_axis_conv': 0.025,
+        'x_axis_desc': "Upm",
+        'y_axis_conv': 1.333333,
+        'y_axis_desc': "%",
+        'cell_conv': 1.3333,
+        'cell_desc': "grad KW"
     },
 }
 
@@ -369,7 +444,7 @@ class ME7Scanner:
         return found_ids
     
     def find_maps(self) -> List[Dict]:
-        """Find map tables in the ROM."""
+        """Find map tables in the ROM and extract their structure."""
         maps = []
         offset = 0
         
@@ -393,22 +468,383 @@ class ME7Scanner:
             phys_addr = (seg_value * SEGMENT_SIZE) + map_offset
             file_offset = phys_addr & ~ROM_1MB_MASK
             
+            # Try to identify map type and extract structure
+            map_data = self.extract_map_data(file_offset)
+            
             map_info = {
                 'needle_offset': offset,
                 'map_offset': map_offset,
                 'segment': seg_value,
                 'physical_address': phys_addr,
-                'file_offset': file_offset
+                'file_offset': file_offset,
+                'map_data': map_data
             }
             
             maps.append(map_info)
-            print(f"Map found: needle at 0x{offset:X}, table at 0x{file_offset:X} (phys: 0x{phys_addr:X})")
+            
+            map_name = map_data.get('name', 'Unknown')
+            x_size = map_data.get('x_size', '?')
+            y_size = map_data.get('y_size', '?')
+            print(f"Map found: '{map_name}' at 0x{file_offset:X} (phys: 0x{phys_addr:X}), size: {x_size}x{y_size}")
             
             # Continue searching from after this match
             offset += len(NEEDLE_PATTERNS['map_table']['needle'])
         
         print(f"Total maps found: {len(maps)}")
         return maps
+
+    def extract_map_data(self, offset: int) -> Dict:
+        """
+        Extract and analyze map data structure.
+        Based on the C implementation in show_tables.c and table_spec.c
+        
+        Maps commonly follow this structure:
+        - X number of elements (1 byte)
+        - Y number of elements (1 byte)
+        - X axis data (X_num * X_width bytes)
+        - Y axis data (Y_num * Y_width bytes)
+        - Cell data (X_num * Y_num * cell_width bytes)
+        """
+        # Try to identify map type by its pattern or location
+        map_type = self.identify_map_type(offset)
+        
+        # Get map definition or use defaults
+        map_def = KNOWN_MAPS.get(map_type, {
+            'desc': f"Unknown Map at 0x{offset:X}",
+            'x_num_width': 1,  # UBYTE
+            'y_num_width': 1,  # UBYTE
+            'x_axis_width': 1, # UBYTE
+            'y_axis_width': 1, # UBYTE
+            'cell_width': 1,   # UBYTE
+            'x_axis_conv': 1.0,
+            'x_axis_desc': "",
+            'y_axis_conv': 1.0,
+            'y_axis_desc': "",
+            'cell_conv': 1.0,
+            'cell_desc': ""
+        })
+        
+        # Extract map dimensions and structure
+        try:
+            x_num_width = map_def['x_num_width']
+            y_num_width = map_def['y_num_width']
+            x_axis_width = map_def['x_axis_width']
+            y_axis_width = map_def['y_axis_width']
+            cell_width = map_def['cell_width']
+            
+            # Read map dimensions
+            if offset + x_num_width > len(self.data):
+                return {'name': map_type, 'error': "Offset out of range"}
+            
+            if x_num_width == 1:
+                x_size = self.data[offset]
+            else:  # Assume 2 bytes (UWORD)
+                x_size = self.get_word(offset)
+                
+            if y_num_width == 0:  # 1D map (no Y dimension)
+                y_size = 0
+            elif offset + x_num_width + y_num_width <= len(self.data):
+                if y_num_width == 1:
+                    y_size = self.data[offset + x_num_width]
+                else:  # Assume 2 bytes (UWORD)
+                    y_size = self.get_word(offset + x_num_width)
+            else:
+                return {'name': map_type, 'error': "Y dimension out of range"}
+                
+            # Sanity check on dimensions
+            if x_size > 50 or y_size > 50:
+                # Probably not a valid map or wrong structure
+                return {
+                    'name': map_type,
+                    'error': f"Suspicious dimensions: {x_size}x{y_size}",
+                    'x_size': x_size if x_size <= 50 else '?',
+                    'y_size': y_size if y_size <= 50 else '?'
+                }
+                
+            # Read X axis data
+            x_axis_start = offset + x_num_width + y_num_width
+            x_axis_data = []
+            
+            for i in range(x_size):
+                if x_axis_start + i * x_axis_width + x_axis_width <= len(self.data):
+                    if x_axis_width == 1:
+                        value = self.data[x_axis_start + i]
+                    else:  # Assume 2 bytes (UWORD)
+                        value = self.get_word(x_axis_start + i * x_axis_width)
+                    x_axis_data.append(value)
+                else:
+                    x_axis_data.append(0)  # Out of range
+            
+            # Read Y axis data (if applicable)
+            y_axis_data = []
+            
+            if y_size > 0:
+                y_axis_start = x_axis_start + (x_size * x_axis_width)
+                
+                for i in range(y_size):
+                    if y_axis_start + i * y_axis_width + y_axis_width <= len(self.data):
+                        if y_axis_width == 1:
+                            value = self.data[y_axis_start + i]
+                        else:  # Assume 2 bytes (UWORD)
+                            value = self.get_word(y_axis_start + i * y_axis_width)
+                        y_axis_data.append(value)
+                    else:
+                        y_axis_data.append(0)  # Out of range
+            
+            # Read cell data
+            cell_data = []
+            
+            if y_size > 0:
+                cell_start = y_axis_start + (y_size * y_axis_width)
+                
+                # 2D map: create a 2D array of cells
+                for y in range(y_size):
+                    row = []
+                    for x in range(x_size):
+                        cell_offset = cell_start + ((y * x_size) + x) * cell_width
+                        if cell_offset + cell_width <= len(self.data):
+                            if cell_width == 1:
+                                value = self.data[cell_offset]
+                            else:  # Assume 2 bytes (UWORD)
+                                value = self.get_word(cell_offset)
+                        else:
+                            value = 0  # Out of range
+                        row.append(value)
+                    cell_data.append(row)
+            else:
+                # 1D map: create a single row
+                cell_start = x_axis_start + (x_size * x_axis_width)
+                row = []
+                
+                for x in range(x_size):
+                    cell_offset = cell_start + x * cell_width
+                    if cell_offset + cell_width <= len(self.data):
+                        if cell_width == 1:
+                            value = self.data[cell_offset]
+                        else:  # Assume 2 bytes (UWORD)
+                            value = self.get_word(cell_offset)
+                    else:
+                        value = 0  # Out of range
+                    row.append(value)
+                cell_data.append(row)
+            
+            # Convert to human-readable values
+            x_axis_data_conv = [val / map_def.get('x_axis_conv', 1.0) for val in x_axis_data]
+            y_axis_data_conv = [val / map_def.get('y_axis_conv', 1.0) for val in y_axis_data] if y_axis_data else []
+            
+            cell_data_conv = []
+            for row in cell_data:
+                cell_data_conv.append([val / map_def.get('cell_conv', 1.0) for val in row])
+            
+            return {
+                'name': map_type,
+                'description': map_def.get('desc', ''),
+                'x_size': x_size,
+                'y_size': y_size,
+                'x_axis_data': x_axis_data,
+                'y_axis_data': y_axis_data,
+                'cell_data': cell_data,
+                'x_axis_data_conv': x_axis_data_conv,
+                'y_axis_data_conv': y_axis_data_conv,
+                'cell_data_conv': cell_data_conv,
+                'x_num_width': x_num_width,
+                'y_num_width': y_num_width,
+                'x_axis_width': x_axis_width,
+                'y_axis_width': y_axis_width,
+                'cell_width': cell_width,
+                'x_axis_conv': map_def.get('x_axis_conv', 1.0),
+                'x_axis_desc': map_def.get('x_axis_desc', ''),
+                'y_axis_conv': map_def.get('y_axis_conv', 1.0),
+                'y_axis_desc': map_def.get('y_axis_desc', ''),
+                'cell_conv': map_def.get('cell_conv', 1.0),
+                'cell_desc': map_def.get('cell_desc', '')
+            }
+            
+        except Exception as e:
+            return {
+                'name': map_type,
+                'error': str(e)
+            }
+
+    def identify_map_type(self, offset: int) -> str:
+        """
+        Try to identify the map type based on its location and structure.
+        This is a heuristic approach that could be improved with more
+        detailed pattern matching.
+        """
+        # Look for common signatures in nearby code that might indicate map type
+        # This would require more detailed analysis of ROM patterns
+        
+        # For now, just create a generic name based on the offset
+        map_name = f"MAP_0x{offset:X}"
+        
+        # In a real implementation, we would look for patterns in surrounding data
+        # to identify common maps like KFAGK, KFPED, etc.
+        # For demonstration, just use a basic signature approach
+        
+        # This is just a placeholder - actual implementation would need more ROM-specific logic
+        signatures = {
+            'KFAGK': b'KFAGK',
+            'KFPED': b'KFPED',
+            'KFKHFM': b'KFKHFM',
+            'KFNW': b'KFNW',
+            'KFZW': b'KFZW',
+        }
+        
+        # Check for signatures within a reasonable range
+        search_range = 256  # bytes
+        start = max(0, offset - search_range)
+        end = min(len(self.data), offset + search_range)
+        
+        for map_type, signature in signatures.items():
+            if self.data.find(signature, start, end) != -1:
+                return map_type
+        
+        return map_name
+
+    def display_map(self, map_data: Dict, human_readable: bool = True) -> None:
+        """
+        Display a map in human-readable format.
+        
+        Args:
+            map_data: The map data dictionary from extract_map_data()
+            human_readable: If True, apply conversions for human-readable values
+        """
+        if not map_data or 'error' in map_data:
+            print(f"Error displaying map: {map_data.get('error', 'Unknown error')}")
+            return
+        
+        print(f"\n{map_data['name']}")
+        if 'description' in map_data:
+            print(f"{map_data['description']}")
+        print("=" * len(map_data['name']))
+        print(f"Size: {map_data['x_size']}x{map_data['y_size']}")
+        
+        # Display structure information
+        print("\nMap Structure:")
+        print(f"X-axis: {map_data['x_num_width']} bytes, conversion factor: {map_data['x_axis_conv']}, unit: {map_data['x_axis_desc']}")
+        if map_data['y_size'] > 0:
+            print(f"Y-axis: {map_data['y_num_width']} bytes, conversion factor: {map_data['y_axis_conv']}, unit: {map_data['y_axis_desc']}")
+        print(f"Cell data: {map_data['cell_width']} bytes, conversion factor: {map_data['cell_conv']}, unit: {map_data['cell_desc']}")
+        
+        # Choose which data to display based on human_readable flag
+        x_axis_values = map_data['x_axis_data_conv'] if human_readable else map_data['x_axis_data']
+        y_axis_values = map_data['y_axis_data_conv'] if human_readable else map_data['y_axis_data']
+        cell_values = map_data['cell_data_conv'] if human_readable else map_data['cell_data']
+        
+        # Display header with X-axis values
+        print("\nX-axis values:")
+        print("    ", end="")
+        for x in range(min(10, map_data['x_size'])):  # Limit to first 10 columns for readability
+            if human_readable:
+                print(f"{x_axis_values[x]:8.2f}", end="")
+            else:
+                print(f"{x_axis_values[x]:8d}", end="")
+                
+        if map_data['x_size'] > 10:
+            print(" ...")
+        else:
+            print()
+        
+        # Display Y-axis and cell data
+        print("\nMap data (Y-axis, cells):")
+        y_range = min(20, map_data['y_size']) if map_data['y_size'] > 0 else 1
+        
+        for y in range(y_range):
+            # Display Y-axis value if available
+            if map_data['y_size'] > 0:
+                if human_readable:
+                    print(f"{y_axis_values[y]:4.1f} |", end="")
+                else:
+                    print(f"{y_axis_values[y]:4d} |", end="")
+            else:
+                print("     |", end="")
+            
+            # Display cell values
+            for x in range(min(10, map_data['x_size'])):
+                if human_readable:
+                    print(f"{cell_values[y][x]:8.2f}", end="")
+                else:
+                    print(f"{cell_values[y][x]:8d}", end="")
+            
+            if map_data['x_size'] > 10:
+                print(" ...")
+            else:
+                print()
+        
+        if map_data['y_size'] > 20:
+            print("...")
+            
+    def export_map_to_csv(self, map_data: Dict, filename: str, human_readable: bool = True) -> bool:
+        """
+        Export map data to a CSV file.
+        
+        Args:
+            map_data: The map data dictionary from extract_map_data()
+            filename: The file to write to
+            human_readable: If True, export converted values; otherwise, raw values
+            
+        Returns:
+            True if successful, False if there was an error
+        """
+        if not map_data or 'error' in map_data:
+            print(f"Error exporting map: {map_data.get('error', 'Unknown error')}")
+            return False
+            
+        try:
+            # Choose which data to export based on human_readable flag
+            x_axis_values = map_data['x_axis_data_conv'] if human_readable else map_data['x_axis_data']
+            y_axis_values = map_data['y_axis_data_conv'] if human_readable else map_data['y_axis_data']
+            cell_values = map_data['cell_data_conv'] if human_readable else map_data['cell_data']
+            
+            with open(filename, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                
+                # Write header row with map information
+                writer.writerow([f"Map: {map_data['name']}", f"Description: {map_data.get('description', '')}"])
+                
+                if human_readable:
+                    writer.writerow([
+                        f"X-axis unit: {map_data.get('x_axis_desc', '')}",
+                        f"Y-axis unit: {map_data.get('y_axis_desc', '')}",
+                        f"Cell unit: {map_data.get('cell_desc', '')}"
+                    ])
+                
+                # Write X-axis header
+                header_row = ["Y/X"]
+                for x_val in x_axis_values:
+                    if human_readable:
+                        header_row.append(f"{x_val:.2f}")
+                    else:
+                        header_row.append(str(x_val))
+                writer.writerow(header_row)
+                
+                # Write Y-axis and cell data
+                y_range = map_data['y_size'] if map_data['y_size'] > 0 else 1
+                
+                for y in range(y_range):
+                    # Start with Y-axis value if available
+                    if map_data['y_size'] > 0:
+                        if human_readable:
+                            row = [f"{y_axis_values[y]:.2f}"]
+                        else:
+                            row = [str(y_axis_values[y])]
+                    else:
+                        row = [""]
+                    
+                    # Add cell values
+                    for x in range(map_data['x_size']):
+                        if human_readable:
+                            row.append(f"{cell_values[y][x]:.2f}")
+                        else:
+                            row.append(str(cell_values[y][x]))
+                    
+                    writer.writerow(row)
+            
+            return True
+        except Exception as e:
+            print(f"Error exporting map to CSV: {e}")
+            return False
     
     def analyze(self) -> Dict:
         """Perform a comprehensive analysis of the ROM file."""
@@ -423,6 +859,7 @@ class ME7Scanner:
         epk_info = self.find_epk_info()
         
         # Get string table info if EPK found
+        string_info = {}
         if epk_info or True:  # Always try to find string table for compatibility
             print("\n>>> Scanning for ROM String Table Byte Sequence #1 [info] \n")
             string_info = self.find_string_table()
@@ -436,7 +873,7 @@ class ME7Scanner:
             "dpp_values": self.dpp_values,
             "epk_info": epk_info,
             "maps": maps,
-            "string_info": string_info if 'string_info' in locals() else {}
+            "string_info": string_info
         }
         
         return results
@@ -446,12 +883,9 @@ def print_header():
     version = "1.6"
     build_date = datetime.now().strftime("%b %d %Y %H:%M:%S")
     
-    print(f"Ferrari 360 ME7.3H4 Rom Tool. *BETA TEST* Last Built: {build_date} v{version}")
-    print("by 360trev.  Needle lookup function borrowed from nyet (Thanks man!) from")
-    print("the ME7sum tool development (see github). ")
-    print("")
-    print("..Now fixed and working on 64-bit hosts, Linux, Apple and Android devices ;)")
-    print("")
+    print(f"romscanner.py Last Built: {build_date} v{version}")
+    print("based on code from  https://github.com/360trev/ME7RomTool_Ferrari ")
+  
 
 def main():
     parser = argparse.ArgumentParser(description="Enhanced ME7 ROM Scanner")
@@ -459,6 +893,9 @@ def main():
     parser.add_argument("--maps", action="store_true", help="Scan for map tables")
     parser.add_argument("--epk", action="store_true", help="Extract EPK information")
     parser.add_argument("--all", action="store_true", help="Perform all analysis")
+    parser.add_argument("--show-map", type=str, help="Display a specific map by name or address")
+    parser.add_argument("--export-maps", type=str, help="Export maps to CSV files in the specified directory")
+    parser.add_argument("--raw", action="store_true", help="Display/export raw values instead of human-readable values")
     
     args = parser.parse_args()
     
@@ -480,17 +917,66 @@ def main():
     
     scanner = ME7Scanner(args.filename)
     
-    if args.all or (not args.maps and not args.epk):
-        scanner.analyze()
+    results = None
+    
+    if args.all or (not args.maps and not args.epk and not args.show_map and not args.export_maps):
+        results = scanner.analyze()
     else:
+        # Initialize dpp values which may be needed for other operations
+        scanner.get_dpp_values()
+        
         if args.maps:
-            scanner.find_maps()
+            maps = scanner.find_maps()
+            if results is None:
+                results = {"maps": maps}
+            else:
+                results["maps"] = maps
+                
         if args.epk:
             print("\n-[ Basic Firmware information ]-----------------------------------------------------------------")
             print("")
             print(">>> Scanning for EPK information [info] ")
             print("")
-            scanner.find_epk_info()
+            epk_info = scanner.find_epk_info()
+            if results is None:
+                results = {"epk_info": epk_info}
+            else:
+                results["epk_info"] = epk_info
+    
+    # Handle map display and export if requested
+    if args.show_map and results and "maps" in results:
+        # Find and display a specific map
+        map_found = False
+        for map_info in results["maps"]:
+            map_name = map_info['map_data'].get('name', '')
+            map_addr = f"0x{map_info['file_offset']:X}"
+            
+            if args.show_map.lower() in map_name.lower() or args.show_map.lower() == map_addr.lower():
+                scanner.display_map(map_info['map_data'], not args.raw)
+                map_found = True
+        
+        if not map_found:
+            print(f"Map not found: {args.show_map}")
+    
+    if args.export_maps and results and "maps" in results:
+        # Create export directory if it doesn't exist
+        os.makedirs(args.export_maps, exist_ok=True)
+        
+        # Export all maps to CSV files
+        for i, map_info in enumerate(results["maps"]):
+            map_data = map_info['map_data']
+            
+            if 'error' in map_data:
+                print(f"Skipping map {i} due to error: {map_data['error']}")
+                continue
+                
+            map_name = map_data.get('name', f"map_{i}")
+            safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', map_name)  # Create safe filename
+            
+            # Export to CSV
+            filename = os.path.join(args.export_maps, f"{safe_name}.csv")
+            if scanner.export_map_to_csv(map_data, filename, not args.raw):
+                print(f"Exported {map_name} to {filename}")
 
 if __name__ == "__main__":
     main()

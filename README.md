@@ -176,7 +176,7 @@ python fls_compare.py <file1.fls> <file2.fls> [min_match_length]
 - Does not validate `.FLS` file format—assumes they are binary.
 
 ---
-# romscanner.py
+# romscanner
 
 romscanner is a specialized tool designed to analyze Bosch ME7.x engine control unit (ECU) firmware files. It's based on the original [ME7RomTool_Ferrari project](https://github.com/360trev/ME7RomTool_Ferrari), reimplementing the C functionality in Python while maintaining the same needle pattern detection system. The tool scans firmware files to identify common structures and patterns using predefined needle patterns from the C implementation's needles.c file.
 
