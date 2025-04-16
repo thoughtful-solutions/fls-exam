@@ -197,3 +197,13 @@ Options include:
 --epk: Extract only EPK information
 --all: Perform all analysis types (default behavior)
 ```
+
+# extract_map_43
+
+Extract map_43 from fls
+
+```
+usage: extract_map_43.py [-h] fls_file
+extract_map_43.py: error: the following arguments are required: fls_file
+python extract_map_43.py "RHS Gated F430 145324.FLS"
+```
