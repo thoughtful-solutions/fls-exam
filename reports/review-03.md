@@ -130,7 +130,8 @@ The table below lists Map #43 across all non-Stock files, with Map #45 from the 
 - **Values**: Key values (52668, 7188, 24667) are from 'RHS Gated F430 145324.FLS' and assumed consistent across non-Stock files (*marked with an asterisk where data is unavailable). They contrast with Stock values (54716, 6420, 30638), highlighting tuning.
 - **Variations**: The non-Stock map shows lower values at higher coordinates (e.g., X=104), suggesting optimized calibration, while retaining Stock values at lower coordinates (e.g., Y=3, X≤64).
 - **Limitation**: Detailed data is only available for one non-Stock file. The generalization assumes Map #43’s structure and values are similar across all Tuned files.
-
+- **Tooling**: ``` windows-bin\me7romtool.exe -maps -romfile "%%f"``` was used to produce the map data and it may not function as expected so this is incorrect data
+  
 ## 6. Conclusion
 
 Map #43 (Multi Axis Map Type #1) is common across all non-Stock FLS files, exemplified by the 8x8 table in 'RHS Gated F430 145324.FLS'. Its values, such as 52668, 7188, and 24667, differ from Stock Map #45’s values (e.g., 54716, 6420, 30638), reflecting performance tuning. The variations, primarily at higher X and Y coordinates, indicate adjustments for specific engine conditions, likely enhancing power or efficiency. Further data from other non-Stock files could confirm the consistency of these values.
